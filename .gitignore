@@ -1,0 +1,21 @@
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.python-version
+
+# Environment
+.env
+
+# Next.js
+frontend/.next/
+frontend/node_modules/
+frontend/out/
+
+# Data
+~/.deepwiki/
+
+# OS
+.DS_Store
+*.md

@@ -1,0 +1,20 @@
+{
+  "provider": "openai",
+  "providers": {
+    "google": {
+      "model": "models/gemini-embedding-001",
+      "dim": 3072
+    },
+    "openai": {
+      "model": "text-embedding-3-small",
+      "dim": 256
+    }
+  },
+  "chunk_size_code": 350,
+  "chunk_overlap_code": 100,
+  "chunk_size_doc": 200,
+  "chunk_overlap_doc": 50,
+  "top_k": 20,
+  "max_tokens_code": 20000,
+  "max_tokens_doc": 2000
+}
