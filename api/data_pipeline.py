@@ -5,7 +5,7 @@ import json
 import shutil
 import tempfile
 from pathlib import Path
-from typing import List, Literal
+from typing import List, Literal, Tuple
 
 import git
 import tiktoken
@@ -225,3 +225,65 @@ def _process_repo(repo_path: str) -> List[Document]:
 
     print(f"  Produced {len(all_docs)} chunks ({skipped} files skipped — too large)")
     return all_docs
+
+
+# ---------------------------------------------------------------------------
+# Repo context (file tree + README) — used by /wiki/structure
+# ---------------------------------------------------------------------------
+
+_README_MAX_CHARS = 8000
+
+
+def get_repo_context(repo_url: str) -> Tuple[str, str]:
+    """
+    Shallow-clone a repository and extract its file tree and README content.
+
+    Reuses _clone_repo and _walk_files so no duplicate clone logic exists.
+
+    Args:
+        repo_url: HTTPS URL of a public GitHub repository.
+
+    Returns:
+        Tuple[str, str]: (file_tree, readme_content) where file_tree is a
+            sorted, newline-separated list of repo-relative file paths and
+            readme_content is the raw README text (up to 8 000 characters).
+
+    Raises:
+        git.GitCommandError: If the clone fails (e.g., repo not found or private).
+    """
+    repo_path = _clone_repo(repo_url)
+    try:
+        root = Path(repo_path)
+        # Reuse _walk_files, then filter out extension-skipped files and sort
+        all_paths = _walk_files(repo_path)
+        file_list = sorted(
+            str(p.relative_to(root))
+            for p in all_paths
+            if _classify(p) != "skip"
+        )
+        file_tree = "\n".join(file_list)
+        readme = _find_readme(root)
+        return file_tree, readme
+    finally:
+        shutil.rmtree(repo_path, ignore_errors=True)
+
+
+def _find_readme(root: Path) -> str:
+    """
+    Find and return the content of the repository's README file.
+
+    Checks common README filenames in order and returns the first match,
+    truncated to _README_MAX_CHARS characters.
+
+    Args:
+        root: Absolute path to the cloned repository root.
+
+    Returns:
+        str: README content (up to 8 000 characters), or a placeholder if
+            no README is found.
+    """
+    for name in ["README.md", "readme.md", "README.rst", "README.txt", "README"]:
+        candidate = root / name
+        if candidate.exists():
+            return candidate.read_text(encoding="utf-8", errors="ignore")[:_README_MAX_CHARS]
+    return "(No README found)"
