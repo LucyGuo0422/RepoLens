@@ -10,8 +10,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from api.checkpointer import get_checkpointer
-from api.graphs.rag_graph import build_rag_graph
 from api.data_pipeline import get_repo_context
+from api.graphs.rag_graph import build_rag_graph
+from api.graphs.wiki_page_graph import build_wiki_page_graph
 from api.llm import get_llm
 from api.prompts import WIKI_STRUCTURE_PROMPT
 
@@ -176,6 +177,60 @@ async def wiki_structure(req: WikiStructureRequest):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return {"wiki_structure": structure}
+
+
+class WikiPageRequest(BaseModel):
+    """Request body for the /wiki/generate-page endpoint."""
+
+    repo_url: str
+    page_title: str
+    file_paths: List[str] = []
+    language: str = "English"
+    provider: str = "google"
+    model: str | None = None
+
+
+@app.post("/wiki/generate-page")
+async def wiki_generate_page(req: WikiPageRequest):
+    """
+    Generate markdown content for one wiki page and stream it token by token.
+
+    Runs the wiki page graph (retrieve → format_context → generate_page) using
+    the page title as the retrieval query, then streams the resulting markdown
+    via a plain-text StreamingResponse.
+
+    Args:
+        req: WikiPageRequest with repo_url, page_title, file_paths, language,
+            provider, and model.
+
+    Returns:
+        StreamingResponse: text/plain stream of markdown tokens.
+
+    Raises:
+        HTTPException: 500 if the graph fails to produce content.
+    """
+    graph = build_wiki_page_graph(provider=req.provider, model=req.model)
+
+    initial_state = {
+        "repo_url": req.repo_url,
+        "language": req.language,
+        "page_title": req.page_title,
+        "file_paths": req.file_paths,
+        "retrieved_docs": [],
+        "context_text": "",
+        "page_content": "",
+    }
+
+    async def token_generator() -> AsyncGenerator[str, None]:
+        """Yield page content tokens from the graph's final state."""
+        result = await graph.ainvoke(initial_state)
+        content: str = result.get("page_content", "")
+        if not content:
+            raise HTTPException(status_code=500, detail="No content generated")
+        for word in content.split(" "):
+            yield word + " "
+
+    return StreamingResponse(token_generator(), media_type="text/plain")
 
 
 class ChatRequest(BaseModel):
