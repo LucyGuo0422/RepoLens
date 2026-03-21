@@ -26,7 +26,7 @@ _BATCH_DELAY: dict[str, float] = {
 
 load_dotenv()
 
-QDRANT_PATH = os.path.expanduser("~/.deepwiki/qdrant")
+QDRANT_PATH = os.path.expanduser("~/.repolens/qdrant")
 _qdrant_client: QdrantClient | None = None
 
 
