@@ -1,6 +1,7 @@
 import json
 import re
 import xml.etree.ElementTree as ET
+from collections import defaultdict
 from pathlib import Path
 from typing import AsyncGenerator, List
 
@@ -223,13 +224,16 @@ async def wiki_generate_page(req: WikiPageRequest):
     }
 
     async def token_generator() -> AsyncGenerator[str, None]:
-        """Yield page content tokens from the graph's final state."""
-        result = await graph.ainvoke(initial_state)
-        content: str = result.get("page_content", "")
-        if not content:
+        """Yield LLM tokens in real time via astream_events."""
+        has_content = False
+        async for event in graph.astream_events(initial_state, version="v2"):
+            if event["event"] == "on_chat_model_stream":
+                token = event["data"]["chunk"].content
+                if token:
+                    has_content = True
+                    yield token
+        if not has_content:
             raise HTTPException(status_code=500, detail="No content generated")
-        for word in content.split(" "):
-            yield word + " "
 
     return StreamingResponse(token_generator(), media_type="text/plain")
 
@@ -322,6 +326,37 @@ def processed_projects():
     return {"projects": list_wikis()}
 
 
+def _build_sources_payload(docs) -> list[dict]:
+    """
+    Convert retrieved LangChain Documents into a JSON-serializable sources list.
+
+    Groups documents by file_path and includes truncated chunk content so the
+    frontend can display related code snippets alongside the answer.
+
+    Args:
+        docs: List of LangChain Document objects with metadata.
+
+    Returns:
+        list[dict]: Each dict has ``file_path`` and ``chunks`` (list of
+            ``content``, ``is_code``, ``chunk_index``).
+    """
+    groups: dict[str, list[dict]] = defaultdict(list)
+    for doc in docs:
+        path = doc.metadata.get("file_path", "unknown")
+        groups[path].append({
+            "chunk_index": doc.metadata.get("chunk_index", 0),
+            "content": doc.page_content[:500],
+            "is_code": doc.metadata.get("is_code", False),
+        })
+    return [
+        {
+            "file_path": path,
+            "chunks": sorted(chunks, key=lambda c: c["chunk_index"]),
+        }
+        for path, chunks in groups.items()
+    ]
+
+
 class ChatRequest(BaseModel):
     """Request body for the /chat/stream endpoint."""
 
@@ -371,15 +406,31 @@ async def chat_stream(req: ChatRequest):
     }
 
     async def token_generator() -> AsyncGenerator[str, None]:
-        """Yield answer tokens from the graph's final state."""
-        result = await graph.ainvoke(
-            initial_state, config={"configurable": {"thread_id": thread_id}}
-        )
-        answer: str = result.get("answer", "")
-        if not answer:
+        """Yield sources JSON prefix, then LLM tokens in real time."""
+        has_content = False
+        sources_sent = False
+        async for event in graph.astream_events(
+            initial_state,
+            config={"configurable": {"thread_id": thread_id}},
+            version="v2",
+        ):
+            # Emit sources once, right after the retrieve node finishes
+            if (
+                not sources_sent
+                and event["event"] == "on_chain_end"
+                and event.get("name") == "retrieve"
+            ):
+                docs = event.get("data", {}).get("output", {}).get("retrieved_docs", [])
+                payload = _build_sources_payload(docs)
+                yield json.dumps({"sources": payload}) + "\n___SOURCES_END___\n"
+                sources_sent = True
+
+            if event["event"] == "on_chat_model_stream":
+                token = event["data"]["chunk"].content
+                if token:
+                    has_content = True
+                    yield token
+        if not has_content:
             raise HTTPException(status_code=500, detail="No answer generated")
-        # Stream word-by-word so the client sees progressive output
-        for word in answer.split(" "):
-            yield word + " "
 
     return StreamingResponse(token_generator(), media_type="text/plain")
