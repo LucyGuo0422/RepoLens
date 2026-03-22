@@ -15,6 +15,7 @@ from api.graphs.rag_graph import build_rag_graph
 from api.graphs.wiki_page_graph import build_wiki_page_graph
 from api.llm import get_llm
 from api.prompts import WIKI_STRUCTURE_PROMPT
+from api.wiki_cache import delete_wiki, get_wiki, list_wikis, save_wiki
 
 CONFIG_DIR = Path(__file__).parent / "config"
 
@@ -231,6 +232,94 @@ async def wiki_generate_page(req: WikiPageRequest):
             yield word + " "
 
     return StreamingResponse(token_generator(), media_type="text/plain")
+
+
+# ---------------------------------------------------------------------------
+# Wiki cache endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/wiki/cache")
+def wiki_cache_get(owner: str, repo: str, language: str = "English"):
+    """
+    Fetch a cached wiki for the given owner/repo/language.
+
+    Args:
+        owner: GitHub repository owner (query param).
+        repo: GitHub repository name (query param).
+        language: Output language code (query param, default "English").
+
+    Returns:
+        dict: Cached wiki with keys ``owner``, ``repo``, ``language``,
+            ``wiki_structure``, ``pages``, ``created_at``, ``updated_at``.
+
+    Raises:
+        HTTPException: 404 if no cache entry exists for the given key.
+    """
+    entry = get_wiki(owner, repo, language)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="No cached wiki found")
+    return entry
+
+
+class WikiCacheSaveRequest(BaseModel):
+    """Request body for POST /wiki/cache."""
+
+    owner: str
+    repo: str
+    language: str = "English"
+    wiki_structure: dict
+    pages: dict
+
+
+@app.post("/wiki/cache")
+def wiki_cache_save(req: WikiCacheSaveRequest):
+    """
+    Save (or overwrite) a completed wiki in the cache.
+
+    Args:
+        req: WikiCacheSaveRequest with owner, repo, language, wiki_structure, and pages.
+
+    Returns:
+        dict: The saved cache entry.
+    """
+    return save_wiki(
+        owner=req.owner,
+        repo=req.repo,
+        language=req.language,
+        wiki_structure=req.wiki_structure,
+        pages=req.pages,
+    )
+
+
+@app.delete("/wiki/cache")
+def wiki_cache_delete(owner: str, repo: str, language: str | None = None):
+    """
+    Delete cached wiki entries for an owner/repo, optionally for one language only.
+
+    Args:
+        owner: GitHub repository owner (query param).
+        repo: GitHub repository name (query param).
+        language: If provided, only that language variant is deleted;
+            if omitted, all language variants are deleted.
+
+    Returns:
+        dict: {"deleted": <number of rows removed>}
+    """
+    count = delete_wiki(owner, repo, language)
+    return {"deleted": count}
+
+
+@app.get("/api/processed_projects")
+def processed_projects():
+    """
+    List all repositories that have a cached wiki.
+
+    Returns:
+        dict: {"projects": [{"owner", "repo", "language", "page_count",
+                             "created_at", "updated_at"}, ...]}
+    """
+    return {"projects": list_wikis()}
 
 
 class ChatRequest(BaseModel):
