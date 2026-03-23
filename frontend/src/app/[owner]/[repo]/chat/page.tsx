@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, use } from "react";
+import { useState, useEffect, useRef, use } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
@@ -13,6 +13,8 @@ import {
   Code2,
   Layers,
   Loader2,
+  Zap,
+  ScanSearch,
 } from "lucide-react";
 import {
   fetchStreamWithSources,
@@ -20,12 +22,51 @@ import {
 } from "@/hooks/useStreamingContent";
 import { Markdown } from "@/components/Markdown";
 
+type ChatMode = "fast" | "deep";
+
 interface Message {
   id: string;
   question: string;
   answer: string;
   sources: SourceFile[];
+  mode: ChatMode;
   isStreaming?: boolean;
+}
+
+function ModeBadge({ mode, small = false }: { mode: ChatMode; small?: boolean }) {
+  const px = small ? "6px" : "8px";
+  const py = small ? "1px" : "2px";
+  const fs = small ? "10px" : "11px";
+  if (mode === "fast") {
+    return (
+      <span
+        className="inline-flex items-center gap-1 rounded-md font-medium"
+        style={{
+          backgroundColor: "#FEF3EB",
+          color: "#C4714A",
+          border: "1px solid #F5D9C4",
+          padding: `${py} ${px}`,
+          fontSize: fs,
+        }}
+      >
+        <Zap size={9} strokeWidth={2} />⚡ Fast
+      </span>
+    );
+  }
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-md font-medium"
+      style={{
+        backgroundColor: "#EDF3EA",
+        color: "#6B8F5E",
+        border: "1px solid #C8DEC0",
+        padding: `${py} ${px}`,
+        fontSize: fs,
+      }}
+    >
+      <ScanSearch size={9} strokeWidth={2} />🔬 Deep
+    </span>
+  );
 }
 
 export default function ChatPage({
@@ -41,25 +82,31 @@ export default function ChatPage({
   const [followUp, setFollowUp] = useState("");
   const [activeIdx, setActiveIdx] = useState(0);
   const [sessionId] = useState(() => `${owner}__${repo}__${Date.now()}`);
+  const initialAsked = useRef(false);
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
+  const [mode, setMode] = useState<ChatMode>(
+    (searchParams.get("mode") as ChatMode) ?? "fast"
+  );
 
   const repoUrl = `https://github.com/${owner}/${repo}`;
   const initialQuestion = searchParams.get("q") || "";
 
   useEffect(() => {
-    if (initialQuestion) {
-      askQuestion(initialQuestion);
+    if (initialQuestion && !initialAsked.current) {
+      initialAsked.current = true;
+      askQuestion(initialQuestion, (searchParams.get("mode") as ChatMode) ?? "fast");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function askQuestion(question: string) {
-    const id = `msg-${Date.now()}`;
+  async function askQuestion(question: string, questionMode: ChatMode) {
+    const id = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const newMsg: Message = {
       id,
       question,
       answer: "",
       sources: [],
+      mode: questionMode,
       isStreaming: true,
     };
 
@@ -71,39 +118,57 @@ export default function ChatPage({
     setExpandedFiles(new Set());
 
     try {
-      await fetchStreamWithSources(
-        "/chat/stream",
-        {
-          repo_url: repoUrl,
-          query: question,
-          provider: "google",
-          language: "English",
-          session_id: sessionId,
-        },
-        (accumulated) => {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === id ? { ...m, answer: accumulated } : m
-            )
-          );
-        },
-        (sources) => {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === id ? { ...m, sources } : m
-            )
-          );
-          // Auto-expand the first source file
-          if (sources.length > 0) {
-            setExpandedFiles(new Set([sources[0].file_path]));
+      if (questionMode === "deep") {
+        await fetchStreamWithSources(
+          "/chat/deep-research",
+          {
+            repo_url: repoUrl,
+            query: question,
+            provider: "google",
+            language: "English",
+          },
+          (accumulated) => {
+            setMessages((prev) =>
+              prev.map((m) => (m.id === id ? { ...m, answer: accumulated } : m))
+            );
+          },
+          (sources) => {
+            setMessages((prev) =>
+              prev.map((m) => (m.id === id ? { ...m, sources } : m))
+            );
+            if (sources.length > 0) {
+              setExpandedFiles(new Set([sources[0].file_path]));
+            }
           }
-        }
-      );
+        );
+      } else {
+        await fetchStreamWithSources(
+          "/chat/stream",
+          {
+            repo_url: repoUrl,
+            query: question,
+            provider: "google",
+            language: "English",
+            session_id: sessionId,
+          },
+          (accumulated) => {
+            setMessages((prev) =>
+              prev.map((m) => (m.id === id ? { ...m, answer: accumulated } : m))
+            );
+          },
+          (sources) => {
+            setMessages((prev) =>
+              prev.map((m) => (m.id === id ? { ...m, sources } : m))
+            );
+            if (sources.length > 0) {
+              setExpandedFiles(new Set([sources[0].file_path]));
+            }
+          }
+        );
+      }
 
       setMessages((prev) =>
-        prev.map((m) =>
-          m.id === id ? { ...m, isStreaming: false } : m
-        )
+        prev.map((m) => (m.id === id ? { ...m, isStreaming: false } : m))
       );
     } catch {
       setMessages((prev) =>
@@ -122,7 +187,7 @@ export default function ChatPage({
 
   const handleAsk = () => {
     if (!followUp.trim()) return;
-    askQuestion(followUp.trim());
+    askQuestion(followUp.trim(), mode);
     setFollowUp("");
   };
 
@@ -196,6 +261,11 @@ export default function ChatPage({
             </span>
           ))}
         </div>
+
+        {/* Current mode badge */}
+        <div className="ml-auto">
+          <ModeBadge mode={mode} />
+        </div>
       </div>
 
       {/* Empty state */}
@@ -220,7 +290,7 @@ export default function ChatPage({
 
       {/* Main content */}
       {messages.length > 0 && (
-        <div className="flex-1 flex max-w-7xl w-full mx-auto px-4 gap-0 pb-28">
+        <div className="flex-1 flex max-w-7xl w-full mx-auto px-4 gap-0 pb-36">
           {/* Left panel — answer thread */}
           <div
             className="flex-1 min-w-0 py-8 px-6 overflow-y-auto"
@@ -233,7 +303,7 @@ export default function ChatPage({
                   <button
                     key={msg.id}
                     onClick={() => setActiveIdx(idx)}
-                    className="w-full text-left p-4 rounded-xl transition-all"
+                    className="w-full text-left p-3.5 rounded-xl transition-all"
                     style={{
                       backgroundColor:
                         activeIdx === idx ? "#F0E8DE" : "#F5F0E8",
@@ -244,7 +314,7 @@ export default function ChatPage({
                   >
                     <div className="flex items-start gap-2.5">
                       <CircleHelp
-                        size={14}
+                        size={13}
                         strokeWidth={1.7}
                         style={{
                           color: "#C4714A",
@@ -257,10 +327,12 @@ export default function ChatPage({
                           color: "#5A4E44",
                           fontSize: "13px",
                           lineHeight: 1.5,
+                          flex: 1,
                         }}
                       >
                         {msg.question}
                       </p>
+                      <ModeBadge mode={msg.mode} small />
                     </div>
                   </button>
                 ))}
@@ -290,23 +362,27 @@ export default function ChatPage({
                       fontSize: "15px",
                       fontWeight: 500,
                       lineHeight: 1.5,
+                      flex: 1,
                     }}
                   >
                     {activeMessage.question}
                   </p>
+                  <ModeBadge mode={activeMessage.mode} />
                 </div>
 
                 {/* Answer */}
                 {activeMessage.isStreaming && !activeMessage.answer ? (
                   <div className="flex items-center gap-2" style={{ color: "#9A8A7A" }}>
                     <Loader2 size={16} className="animate-spin" />
-                    <span style={{ fontSize: "14px" }}>Thinking…</span>
+                    <span style={{ fontSize: "14px" }}>
+                      {activeMessage.mode === "deep" ? "Researching…" : "Thinking…"}
+                    </span>
                   </div>
                 ) : (
                   <Markdown content={activeMessage.answer} />
                 )}
 
-                {/* Sources Referenced (file paths) */}
+                {/* Sources (fast mode only) */}
                 {!activeMessage.isStreaming &&
                   activeMessage.sources.length > 0 && (
                     <div
@@ -367,7 +443,7 @@ export default function ChatPage({
             style={{ backgroundColor: "#E8E0D5" }}
           />
 
-          {/* Right panel — related code + context */}
+          {/* Right panel */}
           <div
             className="py-8 px-6 shrink-0 overflow-y-auto flex flex-col gap-4"
             style={{ width: "42%", height: "calc(100vh - 3.5rem)" }}
@@ -413,7 +489,7 @@ export default function ChatPage({
               </a>
             </div>
 
-            {/* Related Code panel */}
+            {/* Related Code (fast mode only) */}
             {activeMessage && activeMessage.sources.length > 0 && (
               <div
                 className="rounded-xl p-5 flex-1 min-h-0 overflow-y-auto"
@@ -449,7 +525,7 @@ export default function ChatPage({
                             backgroundColor: isExpanded ? "#EDE5D8" : "transparent",
                             color: "#5A4E44",
                             fontSize: "12px",
-                            fontFamily: "var(--font-geist-mono), monospace",
+                            fontFamily: "var(--font-geist-mono), ui-monospace, monospace",
                           }}
                           onMouseEnter={(e) => {
                             if (!isExpanded)
@@ -543,8 +619,8 @@ export default function ChatPage({
                       lineHeight: 1.4,
                     }}
                   >
-                    {msg.question.length > 60
-                      ? msg.question.slice(0, 57) + "…"
+                    {msg.question.length > 55
+                      ? msg.question.slice(0, 52) + "…"
                       : msg.question}
                   </button>
                 ))}
@@ -554,52 +630,105 @@ export default function ChatPage({
         </div>
       )}
 
-      {/* Floating ask bar */}
+      {/* Floating ask bar with mode toggle */}
       <div
         className="fixed bottom-0 left-0 right-0 px-6 pb-5 pt-3"
         style={{
-          background: "linear-gradient(to top, #FAF7F2 70%, transparent)",
+          background: "linear-gradient(to top, #FAF7F2 65%, transparent)",
         }}
       >
         <div
-          className="max-w-4xl mx-auto flex items-center gap-3 p-2 rounded-2xl"
+          className="max-w-4xl mx-auto rounded-2xl overflow-hidden"
           style={{
             backgroundColor: "#FFFDF9",
-            boxShadow:
-              "0 4px 20px rgba(60, 40, 20, 0.1), 0 1px 4px rgba(60, 40, 20, 0.06)",
+            boxShadow: "0 4px 24px rgba(60,40,20,0.1)",
             border: "1px solid #EDE5D8",
           }}
         >
-          <div
-            className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ml-1"
-            style={{ backgroundColor: "#F0E8DE" }}
-          >
-            <BookOpen size={13} strokeWidth={1.8} style={{ color: "#C4714A" }} />
+          {/* Input row */}
+          <div className="flex items-center gap-3 px-3 pt-3 pb-2.5">
+            <div
+              className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
+              style={{ backgroundColor: "#F0E8DE" }}
+            >
+              <BookOpen size={13} strokeWidth={1.8} style={{ color: "#C4714A" }} />
+            </div>
+            <input
+              type="text"
+              value={followUp}
+              onChange={(e) => setFollowUp(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={
+                messages.length === 0
+                  ? "Ask a question about this repo…"
+                  : "Ask a follow-up question…"
+              }
+              className="flex-1 bg-transparent outline-none"
+              style={{ color: "#3A3228", fontSize: "14px", caretColor: "#C4714A" }}
+            />
+            <button
+              onClick={handleAsk}
+              disabled={!followUp.trim()}
+              className="w-8 h-8 rounded-xl flex items-center justify-center transition-all"
+              style={{
+                backgroundColor: followUp.trim() ? "#C4714A" : "#EDE5D8",
+                color: followUp.trim() ? "white" : "#B0A090",
+              }}
+            >
+              <Send size={13} strokeWidth={2} />
+            </button>
           </div>
-          <input
-            type="text"
-            value={followUp}
-            onChange={(e) => setFollowUp(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={
-              messages.length === 0
-                ? "Ask a question about this repo…"
-                : "Ask a follow-up question…"
-            }
-            className="flex-1 bg-transparent outline-none"
-            style={{ color: "#3A3228", fontSize: "14px", caretColor: "#C4714A" }}
-          />
-          <button
-            onClick={handleAsk}
-            disabled={!followUp.trim()}
-            className="w-8 h-8 rounded-xl flex items-center justify-center transition-all"
-            style={{
-              backgroundColor: followUp.trim() ? "#C4714A" : "#EDE5D8",
-              color: followUp.trim() ? "white" : "#B0A090",
-            }}
-          >
-            <Send size={13} strokeWidth={2} />
-          </button>
+
+          {/* Divider */}
+          <div style={{ height: "1px", backgroundColor: "#F0EAE2", margin: "0 12px" }} />
+
+          {/* Mode toggle row */}
+          <div className="flex items-center gap-3 px-3 py-2">
+            <div
+              className="flex items-center p-0.5 rounded-lg"
+              style={{ backgroundColor: "#F0EAE2" }}
+            >
+              <button
+                onClick={() => setMode("fast")}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all"
+                style={{
+                  backgroundColor: mode === "fast" ? "#FFFDF9" : "transparent",
+                  color: mode === "fast" ? "#C4714A" : "#9A8A7A",
+                  fontSize: "12px",
+                  fontWeight: 500,
+                  boxShadow:
+                    mode === "fast"
+                      ? "0 1px 3px rgba(60,40,20,0.08), 0 0 0 1px rgba(60,40,20,0.06)"
+                      : "none",
+                }}
+              >
+                <Zap size={11} strokeWidth={2} />
+                Fast
+              </button>
+              <button
+                onClick={() => setMode("deep")}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all"
+                style={{
+                  backgroundColor: mode === "deep" ? "#FFFDF9" : "transparent",
+                  color: mode === "deep" ? "#6B8F5E" : "#9A8A7A",
+                  fontSize: "12px",
+                  fontWeight: 500,
+                  boxShadow:
+                    mode === "deep"
+                      ? "0 1px 3px rgba(60,40,20,0.08), 0 0 0 1px rgba(60,40,20,0.06)"
+                      : "none",
+                }}
+              >
+                <ScanSearch size={11} strokeWidth={2} />
+                Deep Research
+              </button>
+            </div>
+            <span style={{ fontSize: "11.5px", color: "#B0A090" }}>
+              {mode === "fast"
+                ? "Quick answer from indexed docs"
+                : "Thorough analysis across the full codebase"}
+            </span>
+          </div>
         </div>
       </div>
     </div>

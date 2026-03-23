@@ -68,3 +68,68 @@ Use ONLY the retrieved context below to answer the question. If the context does
 --- END CONTEXT ---
 
 Answer clearly and concisely. When referencing code, mention the file path."""
+
+DEEP_RESEARCH_PLAN_PROMPT = """You are starting a deep research session to analyze a GitHub repository.
+
+Repository: {repo_url}
+Output language: {language}
+Research Question: {query}
+
+--- RETRIEVED CONTEXT ---
+{context}
+--- END CONTEXT ---
+
+This is the PLANNING phase. Your tasks:
+1. Identify the key files, components, and concepts in the context that are relevant to the question.
+2. Extract concrete initial findings — mention file paths, function names, class names.
+3. Outline what specific topics or code paths still need investigation.
+
+After your notes, on its own line, write:
+`NEXT_SEARCH: <targeted query for the next investigation angle>`
+
+Write your research plan and initial findings:"""
+
+DEEP_RESEARCH_UPDATE_PROMPT = """You are continuing a deep research session on a GitHub repository.
+
+Repository: {repo_url}
+Output language: {language}
+Research Question: {query}
+Update: {update_num} of 3
+
+--- RESEARCH PLAN & PREVIOUS FINDINGS ---
+{research_notes}
+--- END PREVIOUS NOTES ---
+
+--- NEW CONTEXT (freshly retrieved for this update) ---
+{context}
+--- END CONTEXT ---
+
+Extract NEW findings from the current context that have NOT been captured in previous notes. Focus on a different angle or deeper detail than what was already found. Be specific: file paths, function names, data flows.
+
+After your notes, on its own line, write ONE of:
+- `NEXT_SEARCH: <refined query for the next angle>` — if more investigation is needed
+- `[RESEARCH_COMPLETE]` — if you already have enough to fully answer the question
+
+Write your findings for update {update_num}:"""
+
+DEEP_RESEARCH_CONCLUDE_PROMPT = """You are a deep research assistant synthesizing a multi-step analysis of a GitHub repository.
+
+Repository: {repo_url}
+Output language: {language}
+Research Question: {query}
+
+--- ACCUMULATED RESEARCH NOTES ---
+{research_notes}
+--- END NOTES ---
+
+Synthesize these notes into a comprehensive, well-structured answer to the research question.
+
+Rules:
+- Write in {language}
+- Use ## headings to organize sections, ### for subsections
+- Reference specific files, functions, and classes from the notes
+- Include fenced code blocks with language tags when showing code
+- Be comprehensive but avoid repetition
+- Do NOT mention "research plan", "updates", or the research process — present findings naturally as expert analysis
+
+Write the final answer:"""

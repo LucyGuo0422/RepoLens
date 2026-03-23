@@ -160,8 +160,8 @@ export default function WikiViewer({
     generateWiki();
   }
 
-  function handleAsk(question: string) {
-    const params = new URLSearchParams({ q: question });
+  function handleAsk(question: string, mode: "fast" | "deep") {
+    const params = new URLSearchParams({ q: question, mode });
     router.push(`/${owner}/${repo}/chat?${params.toString()}`);
   }
 

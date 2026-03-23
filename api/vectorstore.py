@@ -2,6 +2,7 @@
 Qdrant vectorstore helpers: build or load a per-repo collection.
 """
 import os
+import threading
 import time
 from pathlib import Path
 from typing import List
@@ -28,6 +29,7 @@ load_dotenv()
 
 QDRANT_PATH = os.path.expanduser("~/.repolens/qdrant")
 _qdrant_client: QdrantClient | None = None
+_qdrant_lock = threading.Lock()
 
 
 def get_collection_name(repo_url: str) -> str:
@@ -60,14 +62,19 @@ def get_qdrant_client() -> QdrantClient:
 
     The local Qdrant file backend only supports one open client at a time,
     so this function returns a module-level singleton to prevent lock conflicts.
+    A threading lock with double-checked locking ensures only one thread ever
+    creates the client, which is important for the deep research graph where
+    the retrieve node is invoked repeatedly from a thread pool.
 
     Returns:
-        QdrantClient: Singleton client configured to use ~/.deepwiki/qdrant/.
+        QdrantClient: Singleton client configured to use ~/.repolens/qdrant/.
     """
     global _qdrant_client
     if _qdrant_client is None:
-        Path(QDRANT_PATH).mkdir(parents=True, exist_ok=True)
-        _qdrant_client = QdrantClient(path=QDRANT_PATH)
+        with _qdrant_lock:
+            if _qdrant_client is None:
+                Path(QDRANT_PATH).mkdir(parents=True, exist_ok=True)
+                _qdrant_client = QdrantClient(path=QDRANT_PATH)
     return _qdrant_client
 
 

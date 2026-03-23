@@ -10,8 +10,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+
+def _is_quota_error(exc: Exception) -> bool:
+    """Return True if the exception is a Gemini/OpenAI 429 quota-exhaustion error."""
+    return "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc) or "quota" in str(exc).lower()
+
 from api.checkpointer import get_checkpointer
 from api.data_pipeline import get_repo_context
+from api.graphs.deep_research_graph import build_deep_research_graph
 from api.graphs.rag_graph import build_rag_graph
 from api.graphs.wiki_page_graph import build_wiki_page_graph
 from api.llm import get_llm
@@ -170,7 +176,12 @@ async def wiki_structure(req: WikiStructureRequest):
     )
 
     llm = get_llm(provider=req.provider, model=req.model)
-    response = await llm.ainvoke(prompt)
+    try:
+        response = await llm.ainvoke(prompt)
+    except Exception as exc:
+        if _is_quota_error(exc):
+            raise HTTPException(status_code=429, detail="LLM quota exhausted — wait a minute or switch to OpenRouter.") from exc
+        raise HTTPException(status_code=500, detail=f"LLM error: {exc}") from exc
     raw_xml: str = response.content if hasattr(response, "content") else str(response)
 
     try:
@@ -226,14 +237,20 @@ async def wiki_generate_page(req: WikiPageRequest):
     async def token_generator() -> AsyncGenerator[str, None]:
         """Yield LLM tokens in real time via astream_events."""
         has_content = False
-        async for event in graph.astream_events(initial_state, version="v2"):
-            if event["event"] == "on_chat_model_stream":
-                token = event["data"]["chunk"].content
-                if token:
-                    has_content = True
-                    yield token
+        try:
+            async for event in graph.astream_events(initial_state, version="v2"):
+                if event["event"] == "on_chat_model_stream":
+                    token = event["data"]["chunk"].content
+                    if token:
+                        has_content = True
+                        yield token
+        except Exception as exc:
+            if _is_quota_error(exc):
+                yield "\n\n**Error:** LLM quota exhausted — wait a minute or switch to OpenRouter in settings."
+                return
+            raise
         if not has_content:
-            raise HTTPException(status_code=500, detail="No content generated")
+            yield "\n\n**Error:** No content generated."
 
     return StreamingResponse(token_generator(), media_type="text/plain")
 
@@ -409,28 +426,135 @@ async def chat_stream(req: ChatRequest):
         """Yield sources JSON prefix, then LLM tokens in real time."""
         has_content = False
         sources_sent = False
-        async for event in graph.astream_events(
-            initial_state,
-            config={"configurable": {"thread_id": thread_id}},
-            version="v2",
-        ):
-            # Emit sources once, right after the retrieve node finishes
-            if (
-                not sources_sent
-                and event["event"] == "on_chain_end"
-                and event.get("name") == "retrieve"
+        try:
+            async for event in graph.astream_events(
+                initial_state,
+                config={"configurable": {"thread_id": thread_id}},
+                version="v2",
             ):
-                docs = event.get("data", {}).get("output", {}).get("retrieved_docs", [])
-                payload = _build_sources_payload(docs)
-                yield json.dumps({"sources": payload}) + "\n___SOURCES_END___\n"
-                sources_sent = True
+                # Emit sources once, right after the retrieve node finishes
+                if (
+                    not sources_sent
+                    and event["event"] == "on_chain_end"
+                    and event.get("name") == "retrieve"
+                ):
+                    docs = event.get("data", {}).get("output", {}).get("retrieved_docs", [])
+                    payload = _build_sources_payload(docs)
+                    yield json.dumps({"sources": payload}) + "\n___SOURCES_END___\n"
+                    sources_sent = True
 
-            if event["event"] == "on_chat_model_stream":
-                token = event["data"]["chunk"].content
-                if token:
-                    has_content = True
-                    yield token
+                if event["event"] == "on_chat_model_stream":
+                    token = event["data"]["chunk"].content
+                    if token:
+                        has_content = True
+                        yield token
+        except Exception as exc:
+            if _is_quota_error(exc):
+                yield "\n\n**Error:** LLM quota exhausted — wait a minute or switch to OpenRouter in settings."
+                return
+            raise
         if not has_content:
-            raise HTTPException(status_code=500, detail="No answer generated")
+            yield "\n\n**Error:** No answer generated."
+
+    return StreamingResponse(token_generator(), media_type="text/plain")
+
+
+class DeepResearchRequest(BaseModel):
+    """Request body for the /chat/deep-research endpoint."""
+
+    repo_url: str
+    query: str
+    provider: str = "google"
+    model: str | None = None
+    language: str = "English"
+
+
+@app.post("/chat/deep-research")
+async def chat_deep_research(req: DeepResearchRequest):
+    """
+    Run the deep research graph and stream all iterations plus the final answer.
+
+    Runs up to 5 retrieve → research iterations, emitting a brief progress
+    marker after each plan/update node completes, then streams the final
+    synthesised answer from the conclude node.
+
+    Args:
+        req: DeepResearchRequest with repo_url, query, provider, model, and language.
+
+    Returns:
+        StreamingResponse: text/plain stream of all iteration tokens and the
+            final answer, with ``## Iteration N`` and ``## Final Answer``
+            headers separating each phase.
+
+    Raises:
+        HTTPException: 500 if the graph fails to produce any output.
+    """
+    graph = build_deep_research_graph(provider=req.provider, model=req.model)
+
+    initial_state = {
+        "repo_url": req.repo_url,
+        "query": req.query,
+        "language": req.language,
+        "messages": [],
+        "retrieved_docs": [],
+        "context_text": "",
+        "answer": "",
+        "iteration": 1,
+        "research_notes": [],
+        "is_done": False,
+    }
+
+    async def token_generator() -> AsyncGenerator[str, None]:
+        """Stream iteration progress markers, then sources and the final answer."""
+        has_content = False
+        sources_emitted = False
+        all_docs: list = []
+        iteration_num = 0
+
+        try:
+            async for event in graph.astream_events(initial_state, version="v2"):
+                # Accumulate retrieved docs from every retrieve iteration
+                if (
+                    event["event"] == "on_chain_end"
+                    and event.get("name") == "retrieve"
+                ):
+                    docs = event.get("data", {}).get("output", {}).get("retrieved_docs", [])
+                    all_docs.extend(docs)
+
+                # Emit a brief progress marker after each plan/update completes
+                if event["event"] == "on_chain_end" and event.get("name") in ("plan", "update"):
+                    iteration_num += 1
+                    yield f"*Analyzing codebase — iteration {iteration_num} complete…*\n\n"
+                    has_content = True
+
+                # When conclude finishes, emit deduplicated sources then the final answer
+                if event["event"] == "on_chain_end" and event.get("name") == "conclude":
+                    if not sources_emitted:
+                        sources_emitted = True
+                        seen: set[tuple] = set()
+                        unique_docs = []
+                        for doc in all_docs:
+                            key = (
+                                doc.metadata.get("file_path"),
+                                doc.metadata.get("chunk_index"),
+                            )
+                            if key not in seen:
+                                seen.add(key)
+                                unique_docs.append(doc)
+                        payload = _build_sources_payload(unique_docs)
+                        yield json.dumps({"sources": payload}) + "\n___SOURCES_END___\n"
+
+                    answer = event.get("data", {}).get("output", {}).get("answer", "")
+                    if answer:
+                        has_content = True
+                        yield answer
+        except Exception as exc:
+            if _is_quota_error(exc):
+                yield "\n\n**Error:** LLM quota exhausted — wait a minute or switch to OpenRouter in settings."
+                return
+            raise
+
+        if not has_content:
+            yield "\n\n**Error:** No content generated."
 
     return StreamingResponse(token_generator(), media_type="text/plain")

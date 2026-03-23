@@ -26,9 +26,10 @@ def get_llm(provider: str, model: str | None = None, temperature: float | None =
     """
     if provider == "google":
         return ChatGoogleGenerativeAI(
-            model=model or "gemini-2.5-flash",
+            model=model or "gemini-2.0-flash",
             google_api_key=GOOGLE_API_KEY,
             temperature=temperature if temperature is not None else 1.0,
+            streaming=True,
         )
     elif provider == "openrouter":
         return ChatOpenAI(
@@ -36,6 +37,7 @@ def get_llm(provider: str, model: str | None = None, temperature: float | None =
             base_url="https://openrouter.ai/api/v1",
             api_key=OPENROUTER_API_KEY,
             temperature=temperature if temperature is not None else 0.7,
+            streaming=True,
         )
     else:
         raise ValueError(f"Unsupported provider: {provider}")

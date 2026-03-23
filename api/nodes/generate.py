@@ -8,7 +8,7 @@ from api.prompts import CHAT_SYSTEM_PROMPT
 from api.state import ChatState
 
 
-def generate(state: ChatState, provider: str = "google", model: str | None = None) -> dict:
+async def generate(state: ChatState, provider: str = "google", model: str | None = None) -> dict:
     """
     Call the LLM to answer the user query using the formatted context.
 
@@ -28,7 +28,7 @@ def generate(state: ChatState, provider: str = "google", model: str | None = Non
         context=state["context_text"],
     )
 
-    response = llm.invoke([
+    response = await llm.ainvoke([
         SystemMessage(content=system_content),
         HumanMessage(content=state["query"]),
     ])
