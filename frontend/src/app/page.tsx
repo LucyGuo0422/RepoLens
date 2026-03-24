@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, BookOpen, Clock, GitBranch, Sparkles, FileText } from "lucide-react";
 import { Navbar } from "@/components/Navbar";
+import { ConfigCard, WikiConfig } from "@/components/ConfigCard";
 
 interface Project {
   owner: string;
@@ -36,6 +37,7 @@ export default function Home() {
   const [inputValue, setInputValue] = useState("");
   const [projects, setProjects] = useState<Project[]>([]);
   const [error, setError] = useState("");
+  const [showConfig, setShowConfig] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
@@ -45,18 +47,22 @@ export default function Home() {
       .catch(() => {});
   }, []);
 
-  const handleGenerate = () => {
-    const parsed = parseRepoUrl(inputValue);
+  const openConfig = () => setShowConfig(true);
+
+  const handleConfigGenerate = (config: WikiConfig) => {
+    const parsed = parseRepoUrl(config.url);
     if (!parsed) {
       setError("Enter a valid GitHub URL or owner/repo");
+      setShowConfig(false);
       return;
     }
     setError("");
+    setShowConfig(false);
+    sessionStorage.setItem(
+      "wikiGenConfig",
+      JSON.stringify({ provider: config.provider, model: config.model, language: config.language })
+    );
     router.push(`/${parsed.owner}/${parsed.repo}`);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter") handleGenerate();
   };
 
   return (
@@ -121,22 +127,15 @@ export default function Home() {
               <input
                 type="text"
                 value={inputValue}
-                onChange={(e) => {
-                  setInputValue(e.target.value);
-                  setError("");
-                }}
-                onKeyDown={handleKeyDown}
+                onChange={(e) => { setInputValue(e.target.value); setError(""); }}
+                onKeyDown={(e) => { if (e.key === "Enter") openConfig(); }}
                 placeholder="https://github.com/owner/repo"
                 className="flex-1 bg-transparent outline-none"
-                style={{
-                  color: "#3A3228",
-                  fontSize: "15px",
-                  caretColor: "#C4714A",
-                }}
+                style={{ color: "#3A3228", fontSize: "15px", caretColor: "#C4714A" }}
               />
             </div>
             <button
-              onClick={handleGenerate}
+              onClick={openConfig}
               className="flex items-center gap-2 px-5 py-2.5 rounded-xl transition-all"
               style={{
                 backgroundColor: "#C4714A",
@@ -164,8 +163,17 @@ export default function Home() {
               Public repositories only · No account required
             </p>
           )}
+
         </div>
       </section>
+
+      {showConfig && (
+        <ConfigCard
+          initialUrl={inputValue}
+          onClose={() => setShowConfig(false)}
+          onGenerate={handleConfigGenerate}
+        />
+      )}
 
       {/* Recent Wikis */}
       <section className="px-6 pb-24">

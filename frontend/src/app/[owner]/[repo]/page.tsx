@@ -83,12 +83,17 @@ export default function WikiViewer({
     setStreamingContent({});
     setGenerationProgress(0);
 
+    const stored = JSON.parse(sessionStorage.getItem("wikiGenConfig") || "{}");
+    const provider: string = stored.provider ?? "google";
+    const model: string | undefined = stored.model ?? undefined;
+    const language: string = stored.language ?? "English";
+
     try {
       // Step 1: get structure
       const structRes = await fetch("/wiki/structure", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repo_url: repoUrl, language: "English", provider: "google" }),
+        body: JSON.stringify({ repo_url: repoUrl, language, provider, model }),
       });
       if (!structRes.ok) {
         const err = await structRes.json();
@@ -111,8 +116,9 @@ export default function WikiViewer({
             repo_url: repoUrl,
             page_title: page.title,
             file_paths: page.file_paths,
-            language: "English",
-            provider: "google",
+            language,
+            provider,
+            model,
           },
           (accumulated) => {
             setStreamingContent((prev) => ({

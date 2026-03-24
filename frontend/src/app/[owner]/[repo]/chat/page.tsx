@@ -117,6 +117,11 @@ export default function ChatPage({
     });
     setExpandedFiles(new Set());
 
+    const stored = JSON.parse(sessionStorage.getItem("wikiGenConfig") || "{}");
+    const provider = stored.provider ?? "google";
+    const chatModel = stored.model ?? undefined;
+    const language = stored.language ?? "English";
+
     try {
       if (questionMode === "deep") {
         await fetchStreamWithSources(
@@ -124,8 +129,9 @@ export default function ChatPage({
           {
             repo_url: repoUrl,
             query: question,
-            provider: "google",
-            language: "English",
+            provider,
+            model: chatModel,
+            language,
           },
           (accumulated) => {
             setMessages((prev) =>
@@ -147,8 +153,9 @@ export default function ChatPage({
           {
             repo_url: repoUrl,
             query: question,
-            provider: "google",
-            language: "English",
+            provider,
+            model: chatModel,
+            language,
             session_id: sessionId,
           },
           (accumulated) => {
