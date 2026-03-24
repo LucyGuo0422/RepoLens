@@ -117,7 +117,7 @@ export default function ChatPage({
     });
     setExpandedFiles(new Set());
 
-    const stored = JSON.parse(sessionStorage.getItem("wikiGenConfig") || "{}");
+    const stored = JSON.parse(localStorage.getItem("wikiGenConfig") || "{}");
     const provider = stored.provider ?? "google";
     const chatModel = stored.model ?? undefined;
     const language = stored.language ?? "English";

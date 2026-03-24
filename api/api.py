@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 import xml.etree.ElementTree as ET
@@ -22,6 +23,7 @@ from api.graphs.rag_graph import build_rag_graph
 from api.graphs.wiki_page_graph import build_wiki_page_graph
 from api.llm import get_llm
 from api.prompts import WIKI_STRUCTURE_PROMPT
+from api.vectorstore import load_or_build_vectorstore
 from api.wiki_cache import delete_wiki, get_wiki, list_wikis, save_wiki
 
 CONFIG_DIR = Path(__file__).parent / "config"
@@ -163,17 +165,21 @@ async def wiki_structure(req: WikiStructureRequest):
             cannot be parsed as valid XML.
     """
     try:
-        file_tree, readme = get_repo_context(req.repo_url)
+        loop = asyncio.get_event_loop()
+        file_tree, readme = await loop.run_in_executor(None, get_repo_context, req.repo_url)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Failed to clone repository: {exc}") from exc
 
     # Escape literal braces in user-supplied content so .format() doesn't
     # mistake them for template placeholders (common in READMEs and file trees)
-    prompt = WIKI_STRUCTURE_PROMPT.format(
-        repo_url=req.repo_url,
-        file_tree=file_tree.replace("{", "{{").replace("}", "}}"),
-        readme=readme.replace("{", "{{").replace("}", "}}"),
-    )
+    try:
+        prompt = WIKI_STRUCTURE_PROMPT.format(
+            repo_url=req.repo_url,
+            file_tree=file_tree.replace("{", "{{").replace("}", "}}"),
+            readme=readme.replace("{", "{{").replace("}", "}}"),
+        )
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail=f"Prompt formatting error: {exc}") from exc
 
     model_label = f"{req.provider}/{req.model or 'default'}"
     llm = get_llm(provider=req.provider, model=req.model)
@@ -223,6 +229,11 @@ async def wiki_generate_page(req: WikiPageRequest):
     Raises:
         HTTPException: 500 if the graph fails to produce content.
     """
+    # Pre-build vectorstore outside the stream so the graph's retrieve node
+    # finds it already cached and returns immediately — prevents proxy timeouts.
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, load_or_build_vectorstore, req.repo_url)
+
     graph = build_wiki_page_graph(provider=req.provider, model=req.model)
 
     initial_state = {
@@ -236,7 +247,7 @@ async def wiki_generate_page(req: WikiPageRequest):
     }
 
     async def token_generator() -> AsyncGenerator[str, None]:
-        """Yield LLM tokens in real time via astream_events."""
+        """Yield LLM tokens via astream_events, falling back to on_chat_model_end."""
         has_content = False
         try:
             async for event in graph.astream_events(initial_state, version="v2"):
@@ -245,6 +256,13 @@ async def wiki_generate_page(req: WikiPageRequest):
                     if token:
                         has_content = True
                         yield token
+                elif event["event"] == "on_chat_model_end" and not has_content:
+                    # ainvoke path: full response arrives as a single end event
+                    output = event["data"].get("output")
+                    content = output.content if hasattr(output, "content") else ""
+                    if content:
+                        has_content = True
+                        yield content
         except Exception as exc:
             if _is_quota_error(exc):
                 yield "\n\n**Error:** LLM quota exhausted — wait a minute or switch to OpenRouter in settings."
@@ -404,6 +422,10 @@ async def chat_stream(req: ChatRequest):
     Raises:
         HTTPException: 500 if the graph fails to produce an answer.
     """
+    # Pre-build vectorstore so the retrieve node finds it cached
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, load_or_build_vectorstore, req.repo_url)
+
     # thread_id scopes conversation memory per repo + session
     owner_repo = req.repo_url.rstrip("/").split("github.com/")[-1].replace("/", "__")
     thread_id = f"{owner_repo}__{req.session_id}"
@@ -449,6 +471,12 @@ async def chat_stream(req: ChatRequest):
                     if token:
                         has_content = True
                         yield token
+                elif event["event"] == "on_chat_model_end" and not has_content:
+                    output = event["data"].get("output")
+                    content = output.content if hasattr(output, "content") else ""
+                    if content:
+                        has_content = True
+                        yield content
         except Exception as exc:
             if _is_quota_error(exc):
                 if not sources_sent:
@@ -494,6 +522,10 @@ async def chat_deep_research(req: DeepResearchRequest):
     Raises:
         HTTPException: 500 if the graph fails to produce any output.
     """
+    # Pre-build vectorstore so retrieval iterations don't block the stream
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, load_or_build_vectorstore, req.repo_url)
+
     graph = build_deep_research_graph(provider=req.provider, model=req.model)
 
     initial_state = {
@@ -550,6 +582,12 @@ async def chat_deep_research(req: DeepResearchRequest):
                     if token:
                         has_content = True
                         yield token
+                elif in_conclude and event["event"] == "on_chat_model_end" and not has_content:
+                    output = event["data"].get("output")
+                    content = output.content if hasattr(output, "content") else ""
+                    if content:
+                        has_content = True
+                        yield content
 
         except Exception as exc:
             if _is_quota_error(exc):

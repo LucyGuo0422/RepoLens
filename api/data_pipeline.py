@@ -64,11 +64,13 @@ _CODE_SPLITTER = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
     encoding_name="cl100k_base",
     chunk_size=CHUNK_SIZE_CODE,
     chunk_overlap=CHUNK_OVERLAP_CODE,
+    disallowed_special=(),
 )
 _DOC_SPLITTER = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
     encoding_name="cl100k_base",
     chunk_size=CHUNK_SIZE_DOC,
     chunk_overlap=CHUNK_OVERLAP_DOC,
+    disallowed_special=(),
 )
 
 
@@ -82,7 +84,7 @@ def _count_tokens(text: str) -> int:
     Returns:
         int: Number of tokens in the text.
     """
-    return len(_ENCODING.encode(text))
+    return len(_ENCODING.encode(text, disallowed_special=()))
 
 
 def _classify(path: Path) -> Literal["code", "doc", "skip"]:

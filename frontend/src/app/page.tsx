@@ -58,7 +58,7 @@ export default function Home() {
     }
     setError("");
     setShowConfig(false);
-    sessionStorage.setItem(
+    localStorage.setItem(
       "wikiGenConfig",
       JSON.stringify({ provider: config.provider, model: config.model, language: config.language })
     );

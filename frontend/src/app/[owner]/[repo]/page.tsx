@@ -83,7 +83,7 @@ export default function WikiViewer({
     setStreamingContent({});
     setGenerationProgress(0);
 
-    const stored = JSON.parse(sessionStorage.getItem("wikiGenConfig") || "{}");
+    const stored = JSON.parse(localStorage.getItem("wikiGenConfig") || "{}");
     const provider: string = stored.provider ?? "google";
     const model: string | undefined = stored.model ?? undefined;
     const language: string = stored.language ?? "English";
@@ -96,8 +96,9 @@ export default function WikiViewer({
         body: JSON.stringify({ repo_url: repoUrl, language, provider, model }),
       });
       if (!structRes.ok) {
-        const err = await structRes.json();
-        throw new Error(err.detail || "Failed to get wiki structure");
+        let detail = "Failed to get wiki structure";
+        try { const err = await structRes.json(); detail = err.detail || detail; } catch {}
+        throw new Error(detail);
       }
       const { wiki_structure } = await structRes.json();
       const pages: WikiPage[] = wiki_structure.pages;
@@ -200,7 +201,7 @@ export default function WikiViewer({
               {errorMsg}
             </p>
             <button
-              onClick={loadWiki}
+              onClick={generateWiki}
               className="px-4 py-2 rounded-xl text-white text-sm"
               style={{ backgroundColor: "#C4714A" }}
             >
