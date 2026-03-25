@@ -18,4 +18,6 @@ frontend/out/
 
 # OS
 .DS_Store
-*.md
+CLAUDE.md
+devmap.md
+plan.md

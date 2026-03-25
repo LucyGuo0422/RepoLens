@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, BookOpen, Clock, GitBranch, Sparkles, FileText } from "lucide-react";
+import { ArrowRight, BookOpen, Clock, GitBranch, Sparkles, FileText, Trash2 } from "lucide-react";
 import { Navbar } from "@/components/Navbar";
 import { ConfigCard, WikiConfig } from "@/components/ConfigCard";
 
@@ -223,7 +223,18 @@ export default function Home() {
                 <ProjectCard
                   key={`${p.owner}/${p.repo}/${p.language}`}
                   project={p}
-                  onClick={() => router.push(`/${p.owner}/${p.repo}`)}
+                  onClick={() => {
+                    const stored = JSON.parse(localStorage.getItem("wikiGenConfig") || "{}");
+                    localStorage.setItem("wikiGenConfig", JSON.stringify({ ...stored, language: p.language }));
+                    router.push(`/${p.owner}/${p.repo}`);
+                  }}
+                  onDelete={async () => {
+                    await fetch(
+                      `/wiki/cache?owner=${encodeURIComponent(p.owner)}&repo=${encodeURIComponent(p.repo)}&language=${encodeURIComponent(p.language)}`,
+                      { method: "DELETE" }
+                    );
+                    setProjects((prev) => prev.filter((x) => !(x.owner === p.owner && x.repo === p.repo && x.language === p.language)));
+                  }}
                 />
               ))}
             </div>
@@ -237,9 +248,11 @@ export default function Home() {
 function ProjectCard({
   project,
   onClick,
+  onDelete,
 }: {
   project: Project;
   onClick: () => void;
+  onDelete: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
 
@@ -273,15 +286,32 @@ function ProjectCard({
             {project.repo}
           </p>
         </div>
-        <div
-          className="flex items-center gap-1 px-2 py-0.5 rounded-full"
-          style={{
-            backgroundColor: "#F0EAE2",
-            fontSize: "11px",
-            color: "#7A6A5A",
-          }}
-        >
-          {project.language}
+        <div className="flex items-center gap-2">
+          <div
+            className="flex items-center gap-1 px-2 py-0.5 rounded-full"
+            style={{
+              backgroundColor: "#F0EAE2",
+              fontSize: "11px",
+              color: "#7A6A5A",
+            }}
+          >
+            {project.language}
+          </div>
+          <div
+            className="w-6 h-6 rounded-lg flex items-center justify-center transition-colors"
+            style={{ color: "#C4B8AB" }}
+            onClick={(e) => { e.stopPropagation(); onDelete(); }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLElement).style.backgroundColor = "#F0E8DE";
+              (e.currentTarget as HTMLElement).style.color = "#C4714A";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
+              (e.currentTarget as HTMLElement).style.color = "#C4B8AB";
+            }}
+          >
+            <Trash2 size={12} strokeWidth={1.8} />
+          </div>
         </div>
       </div>
 

@@ -5,6 +5,7 @@ Prompt templates for all LangGraph nodes.
 WIKI_STRUCTURE_PROMPT = """You are a technical documentation expert. Given a GitHub repository's file tree and README, design a structured wiki for the project.
 
 Repository: {repo_url}
+Output language: {language}
 
 --- FILE TREE ---
 {file_tree}
@@ -34,7 +35,8 @@ Respond with ONLY the following XML — no explanation, no markdown fences, just
 Rules:
 - Every page must have at least 2 sections.
 - file_paths must only reference files that actually appear in the file tree above.
-- Keep titles short (3–5 words). Keep descriptions to one sentence."""
+- Keep titles short (3–5 words). Keep descriptions to one sentence.
+- Write all titles, descriptions, and section names in {language}."""
 
 WIKI_PAGE_PROMPT = """You are a technical documentation expert writing a wiki page for a GitHub repository.
 

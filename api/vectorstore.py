@@ -30,6 +30,9 @@ load_dotenv()
 QDRANT_PATH = os.path.expanduser("~/.repolens/qdrant")
 _qdrant_client: QdrantClient | None = None
 _qdrant_lock = threading.Lock()
+# Per-collection locks: prevent concurrent reads while a build is in progress
+_collection_locks: dict[str, threading.Lock] = {}
+_collection_locks_guard = threading.Lock()
 
 
 def get_collection_name(repo_url: str) -> str:
@@ -121,12 +124,29 @@ def _add_documents_with_retry(
             time.sleep(batch_delay)
 
 
+def _get_collection_lock(name: str) -> threading.Lock:
+    """
+    Return a per-collection lock, creating one if it doesn't exist yet.
+
+    Args:
+        name: Qdrant collection name.
+
+    Returns:
+        threading.Lock: Lock for the given collection.
+    """
+    with _collection_locks_guard:
+        if name not in _collection_locks:
+            _collection_locks[name] = threading.Lock()
+        return _collection_locks[name]
+
+
 def load_or_build_vectorstore(repo_url: str) -> QdrantVectorStore:
     """
     Return a QdrantVectorStore for the given repo, building it if necessary.
 
     If the Qdrant collection already contains vectors it is loaded directly;
     otherwise the repo is cloned, chunked, embedded, and stored first.
+    A per-collection lock prevents concurrent reads while a build is in progress.
 
     Args:
         repo_url: HTTPS URL of a public GitHub repository.
@@ -135,47 +155,50 @@ def load_or_build_vectorstore(repo_url: str) -> QdrantVectorStore:
         QdrantVectorStore: Ready-to-query LangChain vectorstore.
     """
     collection_name = get_collection_name(repo_url)
-    embedder = get_embedder(DEFAULT_PROVIDER)
-    client = get_qdrant_client()
-    expected_dim = get_embedding_dim(DEFAULT_PROVIDER)
+    lock = _get_collection_lock(collection_name)
 
-    existing = {c.name for c in client.get_collections().collections}
+    with lock:
+        embedder = get_embedder(DEFAULT_PROVIDER)
+        client = get_qdrant_client()
+        expected_dim = get_embedding_dim(DEFAULT_PROVIDER)
 
-    # Check if existing collection has a mismatched vector dimension and drop it if so
-    if collection_name in existing:
-        info = client.get_collection(collection_name)
-        actual_dim = info.config.params.vectors.size
-        if actual_dim != expected_dim:
-            print(f"  Dimension mismatch ({actual_dim} → {expected_dim}) — recreating collection")
-            client.delete_collection(collection_name)
-            existing.discard(collection_name)
+        existing = {c.name for c in client.get_collections().collections}
 
-    if collection_name in existing and client.count(collection_name).count > 0:
-        print(f"Loading existing collection '{collection_name}'")
-        return QdrantVectorStore(
+        # Check if existing collection has a mismatched vector dimension and drop it if so
+        if collection_name in existing:
+            info = client.get_collection(collection_name)
+            actual_dim = info.config.params.vectors.size
+            if actual_dim != expected_dim:
+                print(f"  Dimension mismatch ({actual_dim} → {expected_dim}) — recreating collection")
+                client.delete_collection(collection_name)
+                existing.discard(collection_name)
+
+        if collection_name in existing and client.count(collection_name).count > 0:
+            print(f"Loading existing collection '{collection_name}'")
+            return QdrantVectorStore(
+                client=client,
+                collection_name=collection_name,
+                embedding=embedder,
+            )
+
+        # Build from scratch
+        print(f"Building collection '{collection_name}' for {repo_url}")
+        docs = load_repo_documents(repo_url)
+
+        if not docs:
+            raise ValueError(f"No indexable documents found in {repo_url}")
+
+        if collection_name not in existing:
+            client.create_collection(
+                collection_name=collection_name,
+                vectors_config=VectorParams(size=expected_dim, distance=Distance.COSINE),
+            )
+
+        vs = QdrantVectorStore(
             client=client,
             collection_name=collection_name,
             embedding=embedder,
         )
-
-    # Build from scratch
-    print(f"Building collection '{collection_name}' for {repo_url}")
-    docs = load_repo_documents(repo_url)
-
-    if not docs:
-        raise ValueError(f"No indexable documents found in {repo_url}")
-
-    if collection_name not in existing:
-        client.create_collection(
-            collection_name=collection_name,
-            vectors_config=VectorParams(size=expected_dim, distance=Distance.COSINE),
-        )
-
-    vs = QdrantVectorStore(
-        client=client,
-        collection_name=collection_name,
-        embedding=embedder,
-    )
-    _add_documents_with_retry(vs, docs, provider=DEFAULT_PROVIDER)
-    print(f"Indexed {len(docs)} chunks into '{collection_name}'")
-    return vs
+        _add_documents_with_retry(vs, docs, provider=DEFAULT_PROVIDER)
+        print(f"Indexed {len(docs)} chunks into '{collection_name}'")
+        return vs

@@ -175,6 +175,7 @@ async def wiki_structure(req: WikiStructureRequest):
     try:
         prompt = WIKI_STRUCTURE_PROMPT.format(
             repo_url=req.repo_url,
+            language=req.language,
             file_tree=file_tree.replace("{", "{{").replace("}", "}}"),
             readme=readme.replace("{", "{{").replace("}", "}}"),
         )

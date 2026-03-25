@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  experimental: {
+    proxyTimeout: 300_000, // 5 min — wiki/structure can be slow on large repos
+  },
   async rewrites() {
     return [
       { source: "/wiki/:path*",   destination: "http://localhost:8002/wiki/:path*" },

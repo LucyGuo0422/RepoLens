@@ -57,9 +57,11 @@ export default function WikiViewer({
 
   async function loadWiki() {
     setStatus("loading");
+    const stored = JSON.parse(localStorage.getItem("wikiGenConfig") || "{}");
+    const language: string = stored.language ?? "English";
     try {
       const res = await fetch(
-        `/wiki/cache?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}&language=English`
+        `/wiki/cache?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}&language=${encodeURIComponent(language)}`
       );
       if (res.ok) {
         const data = await res.json();
@@ -138,7 +140,7 @@ export default function WikiViewer({
         body: JSON.stringify({
           owner,
           repo,
-          language: "English",
+          language,
           wiki_structure,
           pages: generatedPages,
         }),
@@ -160,8 +162,10 @@ export default function WikiViewer({
   }
 
   async function regenerateWiki() {
+    const stored = JSON.parse(localStorage.getItem("wikiGenConfig") || "{}");
+    const language: string = stored.language ?? "English";
     await fetch(
-      `/wiki/cache?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}`,
+      `/wiki/cache?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}&language=${encodeURIComponent(language)}`,
       { method: "DELETE" }
     );
     generateWiki();
@@ -301,8 +305,7 @@ export default function WikiViewer({
             </div>
 
             <p style={{ color: "#9A8A7A", fontSize: "13px", marginBottom: "16px" }}>
-              {generatingPage ? `Generating: ${generatingPage}` : "Analyzing repository…"}
-              {total > 0 && ` (${doneCount}/${total} pages)`}
+              {generatingPage ? `Generating: ${generatingPage} (${doneCount}/${total} pages)` : "Analyzing repository…"}
             </p>
 
             {/* Live preview of current page */}
