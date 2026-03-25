@@ -25,7 +25,6 @@ const MODELS: Record<string, { value: string; label: string; tag?: string }[]> =
     { value: "anthropic/claude-3-5-haiku",         label: "Claude 3.5 Haiku",   tag: "Lightweight" },
     { value: "meta-llama/llama-3.3-70b-instruct",  label: "Llama 3.3 70B",      tag: "Open" },
     { value: "qwen/qwen-2.5-72b-instruct",         label: "Qwen 2.5 72B",       tag: "Open" },
-    { value: "qwen/qwen-2.5-coder-32b-instruct",   label: "Qwen 2.5 Coder 32B", tag: "Code" },
   ],
 };
 
