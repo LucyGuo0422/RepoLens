@@ -1,12 +1,10 @@
 """
-Deep research graph: retrieve → format_context → plan/update → (loop or conclude).
+Deep research graph: retrieve → format_context → plan/update → conclude.
 
-Five distinct steps:
+Three LLM calls total:
   1. retrieve + format_context + plan    — iteration 1: strategy & initial findings
-  2. retrieve + format_context + update  — iteration 2: first new angle
-  3. retrieve + format_context + update  — iteration 3: second new angle
-  4. retrieve + format_context + update  — iteration 4 (or early exit): third angle
-  5. conclude                            — synthesise all notes into final answer
+  2. retrieve + format_context + update  — iteration 2: new angle (forced conclude after)
+  3. conclude                            — synthesise all notes into final answer
 """
 from functools import partial
 
@@ -59,8 +57,8 @@ def _should_conclude(state: DeepResearchState) -> str:
     """
     Decide whether to run another update iteration or move to conclusion.
 
-    Concludes when the LLM signals early completion (is_done) or when
-    iteration exceeds 4 (meaning all three update slots have been used).
+    Concludes when the LLM signals early completion (is_done) or after
+    the single update iteration (iteration > 2).
 
     Args:
         state: Current DeepResearchState with is_done and iteration fields.
@@ -80,9 +78,9 @@ def build_deep_research_graph(
     """
     Build and compile the deep research LangGraph.
 
-    Graph layout (five steps total):
-      retrieve → format_context → [route] → plan  (iteration 1)
-                                          → update (iterations 2–4)
+    Graph layout (three LLM calls total):
+      retrieve → format_context → [route] → plan   (iteration 1)
+                                          → update  (iteration 2, then forced conclude)
       plan   → [check] → conclude | retrieve
       update → [check] → conclude | retrieve
       conclude → END

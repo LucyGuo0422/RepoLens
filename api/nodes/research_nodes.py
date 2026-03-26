@@ -3,7 +3,7 @@ Research nodes for the deep research graph: plan, update, and conclude.
 
 Three distinct roles:
   plan    — iteration 1: lay out the investigation strategy and extract initial findings
-  update  — iterations 2–4: dig a new angle each time, guided by NEXT_SEARCH directives
+  update  — iteration 2: dig a new angle, guided by NEXT_SEARCH directive; always concludes after
   conclude — final step: synthesise all accumulated notes into a polished answer
 """
 import re
@@ -191,7 +191,7 @@ async def update_node(
     model: str | None = None,
 ) -> dict:
     """
-    Iterations 2–4 — dig a new angle and accumulate findings.
+    Iteration 2 — dig a new angle and accumulate findings.
 
     Uses the refined query produced by the previous node to retrieve a fresh
     set of documents, then extracts findings that complement (not duplicate)

@@ -19,7 +19,7 @@ A RAG-powered wiki generator for public GitHub repositories. Enter a repo URL an
 | Backend | FastAPI (Python 3.13+) |
 | RAG Engine | LangGraph + LangChain |
 | LLMs | Google Gemini, OpenRouter |
-| Embeddings | Google Generative AI Embeddings |
+| Embeddings | OpenAI `text-embedding-3-small` / Google Generative AI Embeddings (configurable) |
 | Vector Store | Qdrant (local file mode) |
 | Conversation Memory | LangGraph + SQLite checkpoints |
 | Wiki Cache | SQLite |
@@ -29,7 +29,8 @@ A RAG-powered wiki generator for public GitHub repositories. Enter a repo URL an
 - Python 3.13+
 - Node.js 18+
 - [`uv`](https://docs.astral.sh/uv/) Python package manager
-- Google API key ([get one here](https://aistudio.google.com/app/apikey))
+- OpenAI API key — used by the default embedder (`text-embedding-3-small`)
+- Google API key ([get one here](https://aistudio.google.com/app/apikey)) — for Google Gemini LLMs and/or Google embeddings
 - OpenRouter API key (optional, for OpenRouter models)
 
 ## Setup
@@ -47,6 +48,7 @@ cp .env.example .env
 Fill in `.env`:
 ```
 GOOGLE_API_KEY=your_google_api_key
+OPENAI_API_KEY=your_openai_api_key
 OPENROUTER_API_KEY=your_openrouter_api_key  # optional
 ```
 
@@ -86,7 +88,7 @@ When you submit a GitHub URL, RepoLens:
 2. Walks all files, skipping `node_modules`, `.git`, `__pycache__`, etc.
 3. Filters large files (> 20,000 tokens for code, > 2,000 tokens for docs)
 4. Chunks files using token-aware splitters (350-token chunks / 100-token overlap for code; 200/50 for docs)
-5. Embeds chunks via Google Generative AI Embeddings
+5. Embeds chunks via OpenAI `text-embedding-3-small` (default) or Google Generative AI Embeddings
 6. Stores in a per-repo Qdrant collection at `~/.deepwiki/qdrant/`
 
 ### Wiki Generation
@@ -101,7 +103,7 @@ Uses a simple RAG graph: retrieve → format context → generate. Conversation 
 
 ### Deep Research
 
-Runs 3 LLM calls: **planner** (iteration 1, retrieves top-20 chunks and lays out an investigation strategy) → **update** (iteration 2, digs a new angle using a refined query) → **synthesizer** (conclude node, combines all notes into a final answer). Early exit is possible if the update node signals `[RESEARCH_COMPLETE]`.
+Runs 3 LLM calls: **planner** (iteration 1 — analyzes top-20 retrieved chunks, lays out an investigation strategy, emits a refined search query) → **update** (iteration 2 — re-retrieves using the refined query, digs a new angle) → **synthesizer** (conclude node — combines all accumulated notes into a final answer). Early exit is possible if the update node signals `[RESEARCH_COMPLETE]`.
 
 ## Data Persistence
 

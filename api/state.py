@@ -27,19 +27,19 @@ class ChatState(TypedDict):
 
 class DeepResearchState(TypedDict):
     """
-    LangGraph state for the 5-iteration deep research graph.
+    LangGraph state for the deep research graph (plan → update → conclude).
 
     Args:
         repo_url: GitHub repository URL being researched.
-        query: Original user question driving the research.
+        query: Original user question driving the research; refined each iteration.
         language: Output language (e.g. "English", "Chinese").
         messages: Full conversation history; auto-appended by add_messages.
         retrieved_docs: Documents returned by the Qdrant retriever.
         context_text: Retrieved docs formatted into a single context string.
         answer: Latest LLM output for the current iteration.
-        iteration: Current iteration number (1-5).
+        iteration: Current iteration number (1 = plan, 2 = update, then conclude).
         research_notes: Accumulated findings from all completed iterations.
-        is_done: True when the LLM signals research is complete before iteration 5.
+        is_done: True when the LLM signals early completion or after iteration 2.
     """
     repo_url: str
     query: str
