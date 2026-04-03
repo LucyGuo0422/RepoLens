@@ -25,6 +25,8 @@ from api.llm import get_llm
 from api.prompts import WIKI_STRUCTURE_PROMPT
 from api.vectorstore import load_or_build_vectorstore
 from api.wiki_cache import delete_wiki, get_wiki, list_wikis, save_wiki
+from api.eval.eval_cache import get_eval_result
+from api.eval.runner import run_eval
 
 CONFIG_DIR = Path(__file__).parent / "config"
 
@@ -503,6 +505,15 @@ class DeepResearchRequest(BaseModel):
     language: str = "English"
 
 
+class EvalRunRequest(BaseModel):
+    """Request body for the /eval/run endpoint."""
+
+    repo_url: str
+    provider: str = "google"
+    model: str | None = None
+    num_questions: int = 30
+
+
 @app.post("/chat/deep-research")
 async def chat_deep_research(req: DeepResearchRequest):
     """
@@ -604,3 +615,68 @@ async def chat_deep_research(req: DeepResearchRequest):
             yield "\n\n**Error:** No content generated."
 
     return StreamingResponse(token_generator(), media_type="text/plain")
+
+
+# ---------------------------------------------------------------------------
+# Eval endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.post("/eval/run")
+async def eval_run_endpoint(req: EvalRunRequest):
+    """
+    Run the evaluation pipeline for a repository.
+
+    Generates synthetic questions, runs them through the RAG graph,
+    scores with 3 custom evaluators via LangSmith, and returns
+    aggregated scores.
+
+    Args:
+        req: EvalRunRequest with repo_url, provider, model, and num_questions.
+
+    Returns:
+        dict: Aggregated eval scores.
+
+    Raises:
+        HTTPException: 400 if repo_url is invalid; 500 if eval fails.
+    """
+    # Parse owner/repo from URL
+    parts = req.repo_url.rstrip("/").split("github.com/")
+    if len(parts) < 2:
+        raise HTTPException(status_code=400, detail="Invalid GitHub repo URL")
+    segments = parts[-1].strip("/").split("/")
+    if len(segments) < 2:
+        raise HTTPException(status_code=400, detail="Invalid GitHub repo URL")
+    owner, repo = segments[0], segments[1]
+
+    loop = asyncio.get_event_loop()
+    try:
+        scores = await loop.run_in_executor(
+            None, run_eval, owner, repo, req.repo_url, req.provider, req.model, req.num_questions,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Eval failed: {exc}") from exc
+    return scores
+
+
+@app.get("/eval/results")
+def eval_results_endpoint(owner: str, repo: str):
+    """
+    Retrieve the most recent evaluation result for a repository.
+
+    Args:
+        owner: GitHub repository owner (query param).
+        repo: GitHub repository name (query param).
+
+    Returns:
+        dict: Eval result with score fields.
+
+    Raises:
+        HTTPException: 404 if no eval results exist.
+    """
+    result = get_eval_result(owner, repo)
+    if result is None:
+        raise HTTPException(status_code=404, detail="No eval results found")
+    return result
