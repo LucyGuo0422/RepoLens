@@ -10,24 +10,9 @@ Each function follows the LangSmith evaluator signature:
     (inputs: dict, outputs: dict) -> dict with {"key": str, "score": float}
 """
 
-import os
 from typing_extensions import Annotated, TypedDict
 
-from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
-
-load_dotenv()
-
-# ---------------------------------------------------------------------------
-# Judge LLM — non-streaming, temperature=0 for deterministic grading
-# ---------------------------------------------------------------------------
-
-_judge_llm = ChatGoogleGenerativeAI(
-    model="gemini-2.0-flash",
-    google_api_key=os.getenv("GOOGLE_API_KEY"),
-    temperature=0,
-    streaming=False,
-)
+from api.llm import get_llm
 
 
 # ---------------------------------------------------------------------------
@@ -82,74 +67,103 @@ _RETRIEVAL_RELEVANCE_INSTRUCTIONS = (
 
 
 # ---------------------------------------------------------------------------
-# Judge instances with structured output
+# Judge factory
 # ---------------------------------------------------------------------------
 
-_relevance_judge = _judge_llm.with_structured_output(RelevanceGrade)
-_groundedness_judge = _judge_llm.with_structured_output(GroundednessGrade)
-_retrieval_relevance_judge = _judge_llm.with_structured_output(RetrievalRelevanceGrade)
+def _get_judges(provider: str = "google", model: str | None = None) -> tuple:
+    """
+    Build judge LLM instances with structured output for the given provider.
+
+    Args:
+        provider: LLM provider — "google" or "openrouter".
+        model: Specific model ID; uses provider default if None.
+
+    Returns:
+        tuple: (relevance_judge, groundedness_judge, retrieval_relevance_judge)
+    """
+    llm = get_llm(provider, model, temperature=0)
+    return (
+        llm.with_structured_output(RelevanceGrade),
+        llm.with_structured_output(GroundednessGrade),
+        llm.with_structured_output(RetrievalRelevanceGrade),
+    )
 
 
 # ---------------------------------------------------------------------------
-# Evaluator functions (LangSmith-compatible signatures)
+# Evaluator factory — returns LangSmith-compatible functions bound to a provider
 # ---------------------------------------------------------------------------
 
 
-def relevance(inputs: dict, outputs: dict) -> dict:
+def build_evaluators(
+    provider: str = "google", model: str | None = None
+) -> tuple:
     """
-    Judge whether the answer addresses the question.
+    Build the 3 evaluator functions for the given LLM provider.
 
     Args:
-        inputs: Must contain "question" (str).
-        outputs: Must contain "answer" (str).
+        provider: LLM provider — "google" or "openrouter".
+        model: Specific model ID; uses provider default if None.
 
     Returns:
-        dict: {"key": "relevance", "score": 1.0 or 0.0}
+        tuple: (relevance_fn, groundedness_fn, retrieval_relevance_fn)
     """
-    prompt = f"QUESTION: {inputs['question']}\nANSWER: {outputs['answer']}"
-    grade = _relevance_judge.invoke([
-        {"role": "system", "content": _RELEVANCE_INSTRUCTIONS},
-        {"role": "user", "content": prompt},
-    ])
-    return {"key": "relevance", "score": 1.0 if grade["relevant"] else 0.0}
+    rel_judge, grd_judge, ret_judge = _get_judges(provider, model)
 
+    def relevance(inputs: dict, outputs: dict) -> dict:
+        """
+        Judge whether the answer addresses the question.
 
-def groundedness(inputs: dict, outputs: dict) -> dict:
-    """
-    Judge whether the answer is supported by the retrieved documents.
+        Args:
+            inputs: Must contain "question" (str).
+            outputs: Must contain "answer" (str).
 
-    Args:
-        inputs: Not used directly (question available but not needed).
-        outputs: Must contain "answer" (str) and "documents" (list of dicts
-            with "page_content" key).
+        Returns:
+            dict: {"key": "relevance", "score": 1.0 or 0.0}
+        """
+        prompt = f"QUESTION: {inputs['question']}\nANSWER: {outputs['answer']}"
+        grade = rel_judge.invoke([
+            {"role": "system", "content": _RELEVANCE_INSTRUCTIONS},
+            {"role": "user", "content": prompt},
+        ])
+        return {"key": "relevance", "score": 1.0 if grade["relevant"] else 0.0}
 
-    Returns:
-        dict: {"key": "groundedness", "score": 1.0 or 0.0}
-    """
-    docs_text = "\n\n".join(d["page_content"] for d in outputs.get("documents", []))
-    prompt = f"CONTEXT:\n{docs_text}\n\nANSWER: {outputs['answer']}"
-    grade = _groundedness_judge.invoke([
-        {"role": "system", "content": _GROUNDEDNESS_INSTRUCTIONS},
-        {"role": "user", "content": prompt},
-    ])
-    return {"key": "groundedness", "score": 1.0 if grade["grounded"] else 0.0}
+    def groundedness(inputs: dict, outputs: dict) -> dict:
+        """
+        Judge whether the answer is supported by the retrieved documents.
 
+        Args:
+            inputs: Not used directly.
+            outputs: Must contain "answer" (str) and "documents" (list of dicts
+                with "page_content" key).
 
-def retrieval_relevance(inputs: dict, outputs: dict) -> dict:
-    """
-    Judge whether the retrieved documents are relevant to the question.
+        Returns:
+            dict: {"key": "groundedness", "score": 1.0 or 0.0}
+        """
+        docs_text = "\n\n".join(d["page_content"] for d in outputs.get("documents", []))
+        prompt = f"CONTEXT:\n{docs_text}\n\nANSWER: {outputs['answer']}"
+        grade = grd_judge.invoke([
+            {"role": "system", "content": _GROUNDEDNESS_INSTRUCTIONS},
+            {"role": "user", "content": prompt},
+        ])
+        return {"key": "groundedness", "score": 1.0 if grade["grounded"] else 0.0}
 
-    Args:
-        inputs: Must contain "question" (str).
-        outputs: Must contain "documents" (list of dicts with "page_content" key).
+    def retrieval_relevance(inputs: dict, outputs: dict) -> dict:
+        """
+        Judge whether the retrieved documents are relevant to the question.
 
-    Returns:
-        dict: {"key": "retrieval_relevance", "score": 1.0 or 0.0}
-    """
-    docs_text = "\n\n".join(d["page_content"] for d in outputs.get("documents", []))
-    prompt = f"QUESTION: {inputs['question']}\n\nRETRIEVED DOCUMENTS:\n{docs_text}"
-    grade = _retrieval_relevance_judge.invoke([
-        {"role": "system", "content": _RETRIEVAL_RELEVANCE_INSTRUCTIONS},
-        {"role": "user", "content": prompt},
-    ])
-    return {"key": "retrieval_relevance", "score": 1.0 if grade["relevant"] else 0.0}
+        Args:
+            inputs: Must contain "question" (str).
+            outputs: Must contain "documents" (list of dicts with "page_content" key).
+
+        Returns:
+            dict: {"key": "retrieval_relevance", "score": 1.0 or 0.0}
+        """
+        docs_text = "\n\n".join(d["page_content"] for d in outputs.get("documents", []))
+        prompt = f"QUESTION: {inputs['question']}\n\nRETRIEVED DOCUMENTS:\n{docs_text}"
+        grade = ret_judge.invoke([
+            {"role": "system", "content": _RETRIEVAL_RELEVANCE_INSTRUCTIONS},
+            {"role": "user", "content": prompt},
+        ])
+        return {"key": "retrieval_relevance", "score": 1.0 if grade["relevant"] else 0.0}
+
+    return relevance, groundedness, retrieval_relevance

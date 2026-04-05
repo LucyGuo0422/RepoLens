@@ -13,7 +13,7 @@ from langsmith import evaluate as ls_evaluate
 
 from api.eval.dataset_gen import generate_eval_questions
 from api.eval.eval_cache import save_eval_result
-from api.eval.evaluators import groundedness, relevance, retrieval_relevance
+from api.eval.evaluators import build_evaluators
 from api.graphs.rag_graph import build_rag_graph
 from api.vectorstore import load_or_build_vectorstore
 
@@ -49,7 +49,7 @@ def run_eval(
 
     # --- 1. Generate synthetic questions ---
     print(f"[eval] Generating {num_questions} questions for {owner}/{repo}")
-    questions = generate_eval_questions(repo_url, n=num_questions)
+    questions = generate_eval_questions(repo_url, n=num_questions, provider=provider, model=model)
     if not questions:
         raise ValueError("No eval questions could be generated — is the Qdrant collection empty?")
 
@@ -108,6 +108,8 @@ def run_eval(
         }
 
     # --- 4. Run evaluation ---
+    relevance, groundedness, retrieval_relevance = build_evaluators(provider=provider, model=model)
+
     # Track scores locally since the LangSmith results API varies by version
     collected: dict[str, list[float]] = {
         "relevance": [],
