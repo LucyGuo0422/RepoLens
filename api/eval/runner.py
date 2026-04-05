@@ -8,6 +8,8 @@ Eval runner: orchestrate the full LangSmith evaluation pipeline.
 5. Aggregate and persist results
 """
 
+import asyncio
+
 from langsmith import Client
 from langsmith import evaluate as ls_evaluate
 
@@ -87,7 +89,7 @@ def run_eval(
         Returns:
             dict: {"answer": str, "documents": list[dict]}
         """
-        result = graph.invoke({
+        result = asyncio.run(graph.ainvoke({
             "repo_url": inputs["repo_url"],
             "query": inputs["question"],
             "language": "English",
@@ -95,7 +97,7 @@ def run_eval(
             "retrieved_docs": [],
             "context_text": "",
             "answer": "",
-        })
+        }))
         return {
             "answer": result.get("answer", ""),
             "documents": [
