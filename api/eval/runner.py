@@ -71,7 +71,10 @@ def run_eval(
         description=f"Eval dataset for {owner}/{repo}",
     )
     ls_client.create_examples(
-        inputs=[{"question": q["question"], "repo_url": q["repo_url"]} for q in questions],
+        inputs=[
+            {"question": q["question"], "repo_url": q["repo_url"], "category": q.get("category", "direct")}
+            for q in questions
+        ],
         dataset_id=dataset.id,
     )
     print(f"[eval] Uploaded {len(questions)} examples to LangSmith dataset '{dataset_name}'")
