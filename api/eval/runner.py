@@ -27,6 +27,7 @@ def run_eval(
     provider: str = "google",
     model: str | None = None,
     num_questions: int = 30,
+    regenerate_questions: bool = False,
 ) -> dict:
     """
     Run the full evaluation pipeline for a repository.
@@ -38,6 +39,9 @@ def run_eval(
         provider: LLM provider for the RAG graph.
         model: Model ID for the RAG graph; uses provider default if None.
         num_questions: Number of synthetic questions to generate.
+        regenerate_questions: If True, delete existing dataset and generate
+            fresh questions. If False (default), reuse existing dataset when
+            available so experiments are comparable.
 
     Returns:
         dict: Aggregated scores with keys relevance_score, groundedness_score,
@@ -49,35 +53,49 @@ def run_eval(
     # Ensure vectorstore is built
     load_or_build_vectorstore(repo_url)
 
-    # --- 1. Generate synthetic questions ---
-    print(f"[eval] Generating {num_questions} questions for {owner}/{repo}")
-    questions = generate_eval_questions(repo_url, n=num_questions, provider=provider, model=model)
-    if not questions:
-        raise ValueError("No eval questions could be generated — is the Qdrant collection empty?")
-
-    # --- 2. Create/update LangSmith dataset ---
+    # --- 1. Load or generate dataset ---
     ls_client = Client()
     dataset_name = f"repolens-{owner}-{repo}"
 
-    # Delete existing dataset to start fresh each run
-    try:
-        existing = ls_client.read_dataset(dataset_name=dataset_name)
-        ls_client.delete_dataset(dataset_id=existing.id)
-    except Exception:
-        pass
+    existing_dataset = None
+    if not regenerate_questions:
+        try:
+            existing_dataset = ls_client.read_dataset(dataset_name=dataset_name)
+            examples = list(ls_client.list_examples(dataset_id=existing_dataset.id))
+            if examples:
+                num_questions = len(examples)
+                print(f"[eval] Reusing existing dataset '{dataset_name}' ({num_questions} questions)")
+            else:
+                existing_dataset = None
+        except Exception:
+            existing_dataset = None
 
-    dataset = ls_client.create_dataset(
-        dataset_name,
-        description=f"Eval dataset for {owner}/{repo}",
-    )
-    ls_client.create_examples(
-        inputs=[
-            {"question": q["question"], "repo_url": q["repo_url"], "category": q.get("category", "direct")}
-            for q in questions
-        ],
-        dataset_id=dataset.id,
-    )
-    print(f"[eval] Uploaded {len(questions)} examples to LangSmith dataset '{dataset_name}'")
+    if existing_dataset is None:
+        # Generate fresh questions and create dataset
+        print(f"[eval] Generating {num_questions} questions for {owner}/{repo}")
+        questions = generate_eval_questions(repo_url, n=num_questions, provider=provider, model=model)
+        if not questions:
+            raise ValueError("No eval questions could be generated — is the Qdrant collection empty?")
+
+        # Delete stale dataset if it exists
+        try:
+            stale = ls_client.read_dataset(dataset_name=dataset_name)
+            ls_client.delete_dataset(dataset_id=stale.id)
+        except Exception:
+            pass
+
+        dataset = ls_client.create_dataset(
+            dataset_name,
+            description=f"Eval dataset for {owner}/{repo}",
+        )
+        ls_client.create_examples(
+            inputs=[
+                {"question": q["question"], "repo_url": q["repo_url"], "category": q.get("category", "direct")}
+                for q in questions
+            ],
+            dataset_id=dataset.id,
+        )
+        print(f"[eval] Uploaded {len(questions)} examples to LangSmith dataset '{dataset_name}'")
 
     # --- 3. Define target function ---
     graph = build_rag_graph(provider=provider, model=model, checkpointer=None)
