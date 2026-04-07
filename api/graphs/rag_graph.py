@@ -8,7 +8,7 @@ from langgraph.graph import END, StateGraph
 
 from api.nodes.format_context import format_context
 from api.nodes.generate import generate
-from api.nodes.retrieve import retrieve, retrieve_dense_only
+from api.nodes.retrieve import retrieve, retrieve_dense_only, retrieve_hybrid_rerank
 from api.state import ChatState
 
 
@@ -32,13 +32,18 @@ def build_rag_graph(
         model: Specific model ID for the generate node; uses provider default if None.
         checkpointer: Optional LangGraph checkpointer for conversation memory.
         api_key: Override API key; falls back to environment variable if None.
-        retrieval_mode: "hybrid" (dense + BM25 + RRF) or "dense" (vector only).
+        retrieval_mode: "hybrid", "dense", or "hybrid+rerank".
 
     Returns:
         CompiledGraph: A compiled LangGraph ready to invoke or stream.
     """
     generate_node = partial(generate, provider=provider, model=model, api_key=api_key)
-    retrieve_node = retrieve if retrieval_mode == "hybrid" else retrieve_dense_only
+    _retrieve_modes = {
+        "dense": retrieve_dense_only,
+        "hybrid": retrieve,
+        "hybrid+rerank": retrieve_hybrid_rerank,
+    }
+    retrieve_node = _retrieve_modes.get(retrieval_mode, retrieve)
 
     graph = StateGraph(ChatState)
     graph.add_node("retrieve", retrieve_node)

@@ -1,13 +1,18 @@
 """
-Retrieve node: hybrid search (dense + BM25) with Reciprocal Rank Fusion.
+Retrieve node: supports three retrieval modes:
+    dense           — vector similarity only
+    hybrid          — dense + BM25 with Reciprocal Rank Fusion
+    hybrid+rerank   — hybrid + cross-encoder reranking
 """
 from langchain_core.documents import Document
 
 from api.bm25_index import bm25_search
+from api.reranker import rerank
 from api.state import ChatState
 from api.vectorstore import load_or_build_vectorstore
 
 _TOP_K = 20
+_RERANK_TOP_N = 10
 _RRF_K = 60
 
 
@@ -78,6 +83,33 @@ def retrieve(state: ChatState) -> dict:
     merged = _reciprocal_rank_fusion(dense_docs, sparse_docs)
 
     return {"retrieved_docs": merged}
+
+
+def retrieve_hybrid_rerank(state: ChatState) -> dict:
+    """
+    Retrieve with hybrid search + cross-encoder reranking.
+
+    Runs hybrid search (dense + BM25 + RRF) to get top-20 candidates,
+    then re-scores them with a cross-encoder model and returns the top-10.
+
+    Args:
+        state: Current ChatState containing repo_url and query.
+
+    Returns:
+        dict: {"retrieved_docs": List[Document]} to merge into state.
+    """
+    repo_url = state["repo_url"]
+    query = state["query"]
+
+    # Hybrid search
+    vs = load_or_build_vectorstore(repo_url)
+    dense_docs = vs.similarity_search(query, k=_TOP_K)
+    sparse_docs = bm25_search(repo_url, query, k=_TOP_K)
+    merged = _reciprocal_rank_fusion(dense_docs, sparse_docs)
+
+    # Rerank
+    reranked = rerank(query, merged, top_n=_RERANK_TOP_N)
+    return {"retrieved_docs": reranked}
 
 
 def retrieve_dense_only(state: ChatState) -> dict:
