@@ -8,7 +8,7 @@ generate questions across six categories with fixed distribution:
     conceptual  (3) — asks about design intent / architecture
     negative    (3) — asks something the chunk cannot answer (tests hallucination)
     cross_file  (3) — requires understanding across multiple files
-    readme      (3) — generated from README, simulates real user questions
+    keyword     (3) — uses exact identifiers (function/class names) from the code
 """
 
 import random
@@ -63,14 +63,15 @@ _CATEGORY_PROMPTS = {
         "how data flows between them, or what they accomplish as a system.\n"
         "Return ONLY the question text, nothing else."
     ),
-    "readme": (
-        "Below is part of the README from a GitHub repository:\n\n"
+    "keyword": (
+        "Given the following code or documentation snippet from a GitHub repository:\n\n"
         "CONTENT:\n{content}\n\n"
-        "Write ONE question that a developer would ask after reading this README — "
-        "something about how to use the project, how it works internally, or how "
-        "a feature described here is actually implemented in the code.\n"
-        "The question should require looking at the source code to answer, "
-        "not just reading the README.\n"
+        "Step 1: Identify the most important specific identifier in this snippet "
+        "(a function name, class name, variable name, config key, or CLI flag).\n"
+        "Step 2: Write ONE question that uses that exact identifier by name. "
+        "The question should ask what it does, how it works, or where it is used.\n"
+        "For example: 'What does the load_or_build_vectorstore function do?' or "
+        "'What is the _TOP_K variable used for?'\n"
         "Return ONLY the question text, nothing else."
     ),
 }
@@ -82,7 +83,7 @@ _CATEGORY_DISTRIBUTION = {
     "conceptual": 3,
     "negative": 3,
     "cross_file": 3,
-    "readme": 3,
+    "keyword": 3,
 }
 
 
@@ -195,25 +196,6 @@ def _sample_cross_file_groups(all_chunks: list[dict], n: int = 3) -> list[list[d
     return groups
 
 
-def _sample_readme_chunks(all_chunks: list[dict], n: int = 3) -> list[dict]:
-    """
-    Filter and sample chunks that come from README files.
-
-    Args:
-        all_chunks: All chunks from the repo.
-        n: Number of README chunks to sample.
-
-    Returns:
-        list[dict]: Up to n chunks from README files.
-    """
-    readme_chunks = [
-        c for c in all_chunks
-        if "readme" in c["file_path"].lower()
-    ]
-    if not readme_chunks:
-        return []
-    return random.sample(readme_chunks, min(n, len(readme_chunks)))
-
 
 # ---------------------------------------------------------------------------
 # Question generation
@@ -265,29 +247,23 @@ def generate_eval_questions(
     scale = n / 20.0
     distribution = {k: max(1, round(v * scale)) for k, v in _CATEGORY_DISTRIBUTION.items()}
 
-    # Pre-fetch all chunks for cross-file and readme sampling
+    # Pre-fetch all chunks for cross-file sampling
     all_chunks = _scroll_all_chunks(repo_url)
     if not all_chunks:
         return []
 
     # Prepare inputs for each category (extra for backfill)
-    single_count = sum(distribution[c] for c in ["direct", "rephrased", "conceptual", "negative"])
+    single_categories = ["direct", "rephrased", "conceptual", "negative", "keyword"]
+    single_count = sum(distribution[c] for c in single_categories)
     single_chunks = sample_chunks(repo_url, n=single_count + 10)
     cross_file_groups = _sample_cross_file_groups(all_chunks, n=distribution["cross_file"])
-    readme_chunks = _sample_readme_chunks(all_chunks, n=distribution["readme"])
-
-    # If not enough README chunks, give those slots to direct
-    if len(readme_chunks) < distribution["readme"]:
-        extra = distribution["readme"] - len(readme_chunks)
-        distribution["readme"] = len(readme_chunks)
-        distribution["direct"] += extra
 
     questions: list[dict] = []
     failed_slots = 0
 
     # --- Single-chunk categories ---
     chunk_idx = 0
-    for category in ["direct", "rephrased", "conceptual", "negative"]:
+    for category in single_categories:
         for _ in range(distribution[category]):
             if chunk_idx >= len(single_chunks):
                 break
@@ -305,16 +281,6 @@ def generate_eval_questions(
         content = _format_cross_file_content(group)
         prompt = _CATEGORY_PROMPTS["cross_file"].format(content=content)
         q = _call_llm(llm, prompt, "cross_file", repo_url)
-        if q:
-            questions.append(q)
-        else:
-            failed_slots += 1
-
-    # --- README ---
-    for chunk in readme_chunks:
-        content = chunk["page_content"][:800]
-        prompt = _CATEGORY_PROMPTS["readme"].format(content=content)
-        q = _call_llm(llm, prompt, "readme", repo_url)
         if q:
             questions.append(q)
         else:
@@ -357,9 +323,11 @@ def _call_llm(llm, prompt: str, category: str, repo_url: str) -> dict | None:
     """
     try:
         response = llm.invoke(prompt)
-        question = response.content.strip()
+        content = response.content if hasattr(response, "content") else str(response)
+        question = content.strip() if content else ""
         if question:
             return {"question": question, "repo_url": repo_url, "category": category}
+        print(f"  [eval] LLM returned empty response for ({category}), raw: {repr(content)}")
     except Exception as exc:
         print(f"  [eval] Question generation failed ({category}): {exc}")
     return None
