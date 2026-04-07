@@ -78,3 +78,18 @@ def retrieve(state: ChatState) -> dict:
     merged = _reciprocal_rank_fusion(dense_docs, sparse_docs)
 
     return {"retrieved_docs": merged}
+
+
+def retrieve_dense_only(state: ChatState) -> dict:
+    """
+    Retrieve documents using dense vector search only (no BM25).
+
+    Args:
+        state: Current ChatState containing repo_url and query.
+
+    Returns:
+        dict: {"retrieved_docs": List[Document]} to merge into state.
+    """
+    vs = load_or_build_vectorstore(state["repo_url"])
+    docs = vs.similarity_search(state["query"], k=_TOP_K)
+    return {"retrieved_docs": docs}

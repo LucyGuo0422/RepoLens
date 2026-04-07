@@ -28,6 +28,7 @@ def run_eval(
     model: str | None = None,
     num_questions: int = 30,
     regenerate_questions: bool = False,
+    retrieval_mode: str = "hybrid",
 ) -> dict:
     """
     Run the full evaluation pipeline for a repository.
@@ -42,6 +43,7 @@ def run_eval(
         regenerate_questions: If True, delete existing dataset and generate
             fresh questions. If False (default), reuse existing dataset when
             available so experiments are comparable.
+        retrieval_mode: "hybrid" (dense + BM25 + RRF) or "dense" (vector only).
 
     Returns:
         dict: Aggregated scores with keys relevance_score, groundedness_score,
@@ -98,7 +100,8 @@ def run_eval(
         print(f"[eval] Uploaded {len(questions)} examples to LangSmith dataset '{dataset_name}'")
 
     # --- 3. Define target function ---
-    graph = build_rag_graph(provider=provider, model=model, checkpointer=None)
+    graph = build_rag_graph(provider=provider, model=model, checkpointer=None, retrieval_mode=retrieval_mode)
+    print(f"[eval] Retrieval mode: {retrieval_mode}")
 
     def predict(inputs: dict) -> dict:
         """
@@ -150,7 +153,7 @@ def run_eval(
         wrapper.__name__ = key
         return wrapper
 
-    experiment_prefix = f"repolens-{owner}-{repo}"
+    experiment_prefix = f"repolens-{owner}-{repo}-{retrieval_mode}"
     print(f"[eval] Running LangSmith evaluate() with prefix '{experiment_prefix}'")
 
     ls_evaluate(

@@ -541,6 +541,7 @@ class EvalRunRequest(BaseModel):
     model: str | None = None
     regenerate_questions: bool = False
     num_questions: int = 30
+    retrieval_mode: str = "hybrid"
 
 
 @app.post("/chat/deep-research")
@@ -682,7 +683,7 @@ async def eval_run_endpoint(req: EvalRunRequest):
     loop = asyncio.get_event_loop()
     try:
         scores = await loop.run_in_executor(
-            None, run_eval, owner, repo, req.repo_url, req.provider, req.model, req.num_questions, req.regenerate_questions,
+            None, run_eval, owner, repo, req.repo_url, req.provider, req.model, req.num_questions, req.regenerate_questions, req.retrieval_mode,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

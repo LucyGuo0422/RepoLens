@@ -8,7 +8,7 @@ from langgraph.graph import END, StateGraph
 
 from api.nodes.format_context import format_context
 from api.nodes.generate import generate
-from api.nodes.retrieve import retrieve
+from api.nodes.retrieve import retrieve, retrieve_dense_only
 from api.state import ChatState
 
 
@@ -16,12 +16,14 @@ def build_rag_graph(
     provider: str = "google",
     model: str | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
+    api_key: str | None = None,
+    retrieval_mode: str = "hybrid",
 ):
     """
     Build and compile the RAG chat LangGraph.
 
     The graph runs three nodes in sequence:
-      1. retrieve       — similarity-search Qdrant for top-20 docs
+      1. retrieve       — search Qdrant for top-20 docs
       2. format_context — group docs by file path into a context string
       3. generate       — call the LLM and write the answer to state
 
@@ -29,14 +31,17 @@ def build_rag_graph(
         provider: LLM provider to pass to the generate node.
         model: Specific model ID for the generate node; uses provider default if None.
         checkpointer: Optional LangGraph checkpointer for conversation memory.
+        api_key: Override API key; falls back to environment variable if None.
+        retrieval_mode: "hybrid" (dense + BM25 + RRF) or "dense" (vector only).
 
     Returns:
         CompiledGraph: A compiled LangGraph ready to invoke or stream.
     """
-    generate_node = partial(generate, provider=provider, model=model)
+    generate_node = partial(generate, provider=provider, model=model, api_key=api_key)
+    retrieve_node = retrieve if retrieval_mode == "hybrid" else retrieve_dense_only
 
     graph = StateGraph(ChatState)
-    graph.add_node("retrieve", retrieve)
+    graph.add_node("retrieve", retrieve_node)
     graph.add_node("format_context", format_context)
     graph.add_node("generate", generate_node)
 
