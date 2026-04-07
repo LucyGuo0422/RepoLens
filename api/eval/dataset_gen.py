@@ -270,10 +270,9 @@ def generate_eval_questions(
     if not all_chunks:
         return []
 
-    # Prepare inputs for each category
-    single_chunks = sample_chunks(repo_url, n=sum(
-        distribution[c] for c in ["direct", "rephrased", "conceptual", "negative"]
-    ))
+    # Prepare inputs for each category (extra for backfill)
+    single_count = sum(distribution[c] for c in ["direct", "rephrased", "conceptual", "negative"])
+    single_chunks = sample_chunks(repo_url, n=single_count + 10)
     cross_file_groups = _sample_cross_file_groups(all_chunks, n=distribution["cross_file"])
     readme_chunks = _sample_readme_chunks(all_chunks, n=distribution["readme"])
 
@@ -284,6 +283,7 @@ def generate_eval_questions(
         distribution["direct"] += extra
 
     questions: list[dict] = []
+    failed_slots = 0
 
     # --- Single-chunk categories ---
     chunk_idx = 0
@@ -297,6 +297,8 @@ def generate_eval_questions(
             q = _call_llm(llm, prompt, category, repo_url)
             if q:
                 questions.append(q)
+            else:
+                failed_slots += 1
 
     # --- Cross-file ---
     for group in cross_file_groups:
@@ -305,6 +307,8 @@ def generate_eval_questions(
         q = _call_llm(llm, prompt, "cross_file", repo_url)
         if q:
             questions.append(q)
+        else:
+            failed_slots += 1
 
     # --- README ---
     for chunk in readme_chunks:
@@ -313,6 +317,21 @@ def generate_eval_questions(
         q = _call_llm(llm, prompt, "readme", repo_url)
         if q:
             questions.append(q)
+        else:
+            failed_slots += 1
+
+    # --- Backfill failed slots with direct questions ---
+    if failed_slots > 0 and chunk_idx < len(single_chunks):
+        print(f"  [eval] Backfilling {failed_slots} failed slots with direct questions")
+        for _ in range(failed_slots):
+            if chunk_idx >= len(single_chunks):
+                break
+            content = single_chunks[chunk_idx]["page_content"][:800]
+            chunk_idx += 1
+            prompt = _CATEGORY_PROMPTS["direct"].format(content=content)
+            q = _call_llm(llm, prompt, "direct", repo_url)
+            if q:
+                questions.append(q)
 
     # Log category distribution
     counts = {c: 0 for c in _CATEGORY_PROMPTS}
