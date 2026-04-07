@@ -12,7 +12,7 @@ from api.state import ChatState
 from api.vectorstore import load_or_build_vectorstore
 
 _TOP_K = 20
-_RERANK_TOP_N = 10
+_RERANK_TOP_N = 5
 _RRF_K = 60
 
 
