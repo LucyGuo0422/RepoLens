@@ -1,12 +1,13 @@
 import asyncio
 import json
+import os
 import re
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 from pathlib import Path
 from typing import AsyncGenerator, List
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -15,6 +16,28 @@ from pydantic import BaseModel
 def _is_quota_error(exc: Exception) -> bool:
     """Return True if the exception is a Gemini/OpenAI 429 quota-exhaustion error."""
     return "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc) or "quota" in str(exc).lower()
+
+
+def _get_api_key(request: Request, provider: str) -> str | None:
+    """
+    Extract the provider-specific API key from request headers.
+
+    Reads ``x-google-api-key`` for google and ``x-openrouter-api-key``
+    for openrouter. Returns None if the header is absent or empty, so
+    the backend falls back to its own environment variable.
+
+    Args:
+        request: The incoming FastAPI Request object.
+        provider: LLM provider string ("google" or "openrouter").
+
+    Returns:
+        str | None: The header value, or None if not present.
+    """
+    if provider == "google":
+        return request.headers.get("x-google-api-key") or None
+    elif provider == "openrouter":
+        return request.headers.get("x-openrouter-api-key") or None
+    return None
 
 from api.checkpointer import get_checkpointer
 from api.data_pipeline import get_repo_context
@@ -25,15 +48,19 @@ from api.llm import get_llm
 from api.prompts import WIKI_STRUCTURE_PROMPT
 from api.vectorstore import load_or_build_vectorstore
 from api.wiki_cache import delete_wiki, get_wiki, list_wikis, save_wiki
+from api.eval.eval_cache import get_eval_result
+from api.eval.runner import run_eval
 
 CONFIG_DIR = Path(__file__).parent / "config"
 
 app = FastAPI(title="RepoLens API")
 
+_CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_credentials=True,
+    allow_origins=_CORS_ORIGINS,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -145,7 +172,7 @@ def _parse_wiki_structure(xml_text: str) -> dict:
 
 
 @app.post("/wiki/structure")
-async def wiki_structure(req: WikiStructureRequest):
+async def wiki_structure(req: WikiStructureRequest, request: Request):
     """
     Generate a structured wiki page plan for a GitHub repository.
 
@@ -183,7 +210,8 @@ async def wiki_structure(req: WikiStructureRequest):
         raise HTTPException(status_code=500, detail=f"Prompt formatting error: {exc}") from exc
 
     model_label = f"{req.provider}/{req.model or 'default'}"
-    llm = get_llm(provider=req.provider, model=req.model)
+    api_key = _get_api_key(request, req.provider)
+    llm = get_llm(provider=req.provider, model=req.model, api_key=api_key)
     try:
         response = await llm.ainvoke(prompt)
     except Exception as exc:
@@ -212,7 +240,7 @@ class WikiPageRequest(BaseModel):
 
 
 @app.post("/wiki/generate-page")
-async def wiki_generate_page(req: WikiPageRequest):
+async def wiki_generate_page(req: WikiPageRequest, request: Request):
     """
     Generate markdown content for one wiki page and stream it token by token.
 
@@ -235,7 +263,8 @@ async def wiki_generate_page(req: WikiPageRequest):
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, load_or_build_vectorstore, req.repo_url)
 
-    graph = build_wiki_page_graph(provider=req.provider, model=req.model)
+    api_key = _get_api_key(request, req.provider)
+    graph = build_wiki_page_graph(provider=req.provider, model=req.model, api_key=api_key)
 
     initial_state = {
         "repo_url": req.repo_url,
@@ -406,7 +435,7 @@ class ChatRequest(BaseModel):
 
 
 @app.post("/chat/stream")
-async def chat_stream(req: ChatRequest):
+async def chat_stream(req: ChatRequest, request: Request):
     """
     Run the RAG chat graph and stream the LLM answer token by token.
 
@@ -432,8 +461,9 @@ async def chat_stream(req: ChatRequest):
     thread_id = f"{owner_repo}__{req.session_id}"
 
     checkpointer = await get_checkpointer()
+    api_key = _get_api_key(request, req.provider)
     graph = build_rag_graph(
-        provider=req.provider, model=req.model, checkpointer=checkpointer
+        provider=req.provider, model=req.model, checkpointer=checkpointer, api_key=api_key
     )
 
     initial_state = {
@@ -503,8 +533,19 @@ class DeepResearchRequest(BaseModel):
     language: str = "English"
 
 
+class EvalRunRequest(BaseModel):
+    """Request body for the /eval/run endpoint."""
+
+    repo_url: str
+    provider: str = "google"
+    model: str | None = None
+    regenerate_questions: bool = False
+    num_questions: int = 30
+    retrieval_mode: str = "hybrid"
+
+
 @app.post("/chat/deep-research")
-async def chat_deep_research(req: DeepResearchRequest):
+async def chat_deep_research(req: DeepResearchRequest, request: Request):
     """
     Run the deep research graph and stream all iterations plus the final answer.
 
@@ -527,7 +568,8 @@ async def chat_deep_research(req: DeepResearchRequest):
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, load_or_build_vectorstore, req.repo_url)
 
-    graph = build_deep_research_graph(provider=req.provider, model=req.model)
+    api_key = _get_api_key(request, req.provider)
+    graph = build_deep_research_graph(provider=req.provider, model=req.model, api_key=api_key)
 
     initial_state = {
         "repo_url": req.repo_url,
@@ -604,3 +646,68 @@ async def chat_deep_research(req: DeepResearchRequest):
             yield "\n\n**Error:** No content generated."
 
     return StreamingResponse(token_generator(), media_type="text/plain")
+
+
+# ---------------------------------------------------------------------------
+# Eval endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.post("/eval/run")
+async def eval_run_endpoint(req: EvalRunRequest):
+    """
+    Run the evaluation pipeline for a repository.
+
+    Generates synthetic questions, runs them through the RAG graph,
+    scores with 3 custom evaluators via LangSmith, and returns
+    aggregated scores.
+
+    Args:
+        req: EvalRunRequest with repo_url, provider, model, and num_questions.
+
+    Returns:
+        dict: Aggregated eval scores.
+
+    Raises:
+        HTTPException: 400 if repo_url is invalid; 500 if eval fails.
+    """
+    # Parse owner/repo from URL
+    parts = req.repo_url.rstrip("/").split("github.com/")
+    if len(parts) < 2:
+        raise HTTPException(status_code=400, detail="Invalid GitHub repo URL")
+    segments = parts[-1].strip("/").split("/")
+    if len(segments) < 2:
+        raise HTTPException(status_code=400, detail="Invalid GitHub repo URL")
+    owner, repo = segments[0], segments[1]
+
+    loop = asyncio.get_event_loop()
+    try:
+        scores = await loop.run_in_executor(
+            None, run_eval, owner, repo, req.repo_url, req.provider, req.model, req.num_questions, req.regenerate_questions, req.retrieval_mode,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Eval failed: {exc}") from exc
+    return scores
+
+
+@app.get("/eval/results")
+def eval_results_endpoint(owner: str, repo: str):
+    """
+    Retrieve the most recent evaluation result for a repository.
+
+    Args:
+        owner: GitHub repository owner (query param).
+        repo: GitHub repository name (query param).
+
+    Returns:
+        dict: Eval result with score fields.
+
+    Raises:
+        HTTPException: 404 if no eval results exist.
+    """
+    result = get_eval_result(owner, repo)
+    if result is None:
+        raise HTTPException(status_code=404, detail="No eval results found")
+    return result
