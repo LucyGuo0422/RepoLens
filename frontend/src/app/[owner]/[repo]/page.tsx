@@ -14,7 +14,7 @@ import { Navbar } from "@/components/Navbar";
 import { WikiTreeView } from "@/components/WikiTreeView";
 import { Ask } from "@/components/Ask";
 import { Markdown } from "@/components/Markdown";
-import { fetchStream } from "@/hooks/useStreamingContent";
+import { fetchStream, getApiKeyHeaders } from "@/hooks/useStreamingContent";
 
 interface WikiPage {
   title: string;
@@ -94,7 +94,7 @@ export default function WikiViewer({
       // Step 1: get structure
       const structRes = await fetch("/wiki/structure", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getApiKeyHeaders() },
         body: JSON.stringify({ repo_url: repoUrl, language, provider, model }),
       });
       if (!structRes.ok) {
