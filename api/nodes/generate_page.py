@@ -10,6 +10,7 @@ async def generate_page(
     state: WikiPageState,
     provider: str = "google",
     model: str | None = None,
+    api_key: str | None = None,
 ) -> dict:
     """
     Call the LLM asynchronously to generate markdown content for one wiki page.
@@ -21,11 +22,12 @@ async def generate_page(
         state: Current WikiPageState with repo_url, language, page_title, and context_text.
         provider: LLM provider to use — "google" or "openrouter".
         model: Specific model ID; falls back to provider default if None.
+        api_key: Override API key; falls back to environment variable if None.
 
     Returns:
         dict: {"page_content": str} to merge into state.
     """
-    llm = get_llm(provider, model)
+    llm = get_llm(provider, model, api_key=api_key)
 
     # Escape braces in context so .format() doesn't misinterpret them
     prompt = WIKI_PAGE_PROMPT.format(

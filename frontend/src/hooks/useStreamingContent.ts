@@ -2,6 +2,21 @@
 
 import { useState, useCallback } from "react";
 
+export function getApiKeyHeaders(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  try {
+    const stored = localStorage.getItem("apiKeys");
+    if (!stored) return {};
+    const keys = JSON.parse(stored) as { google?: string; openrouter?: string };
+    const headers: Record<string, string> = {};
+    if (keys.google)     headers["x-google-api-key"]     = keys.google;
+    if (keys.openrouter) headers["x-openrouter-api-key"] = keys.openrouter;
+    return headers;
+  } catch {
+    return {};
+  }
+}
+
 export function useStreamingContent() {
   const [content, setContent] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
@@ -16,7 +31,7 @@ export function useStreamingContent() {
       try {
         const response = await fetch(url, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...getApiKeyHeaders() },
           body: JSON.stringify(body),
         });
 
@@ -58,7 +73,7 @@ export async function fetchStream(
 ): Promise<string> {
   const response = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getApiKeyHeaders() },
     body: JSON.stringify(body),
   });
 
@@ -96,7 +111,7 @@ export async function fetchStreamWithSources(
 ): Promise<string> {
   const response = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getApiKeyHeaders() },
     body: JSON.stringify(body),
   });
 

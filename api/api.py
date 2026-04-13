@@ -540,7 +540,7 @@ class EvalRunRequest(BaseModel):
     provider: str = "google"
     model: str | None = None
     regenerate_questions: bool = False
-    num_questions: int = 30
+    num_questions: int = 20
     retrieval_mode: str = "hybrid"
 
 

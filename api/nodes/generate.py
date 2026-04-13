@@ -8,7 +8,12 @@ from api.prompts import CHAT_SYSTEM_PROMPT
 from api.state import ChatState
 
 
-async def generate(state: ChatState, provider: str = "google", model: str | None = None) -> dict:
+async def generate(
+    state: ChatState,
+    provider: str = "google",
+    model: str | None = None,
+    api_key: str | None = None,
+) -> dict:
     """
     Call the LLM to answer the user query using the formatted context.
 
@@ -16,11 +21,12 @@ async def generate(state: ChatState, provider: str = "google", model: str | None
         state: Current ChatState with query, context_text, repo_url, and language.
         provider: LLM provider to use — "google" or "openrouter".
         model: Specific model ID; falls back to provider default if None.
+        api_key: Override API key; falls back to environment variable if None.
 
     Returns:
         dict: {"answer": str, "messages": [HumanMessage, AIMessage]} to merge into state.
     """
-    llm = get_llm(provider, model)
+    llm = get_llm(provider, model, api_key=api_key)
 
     system_content = CHAT_SYSTEM_PROMPT.format(
         repo_url=state["repo_url"],

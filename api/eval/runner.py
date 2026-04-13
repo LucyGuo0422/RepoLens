@@ -26,7 +26,7 @@ def run_eval(
     repo_url: str,
     provider: str = "google",
     model: str | None = None,
-    num_questions: int = 30,
+    num_questions: int = 20,
     regenerate_questions: bool = False,
     retrieval_mode: str = "hybrid",
 ) -> dict:

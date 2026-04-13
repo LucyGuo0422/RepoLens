@@ -74,6 +74,7 @@ def _should_conclude(state: DeepResearchState) -> str:
 def build_deep_research_graph(
     provider: str = "google",
     model: str | None = None,
+    api_key: str | None = None,
 ):
     """
     Build and compile the deep research LangGraph.
@@ -88,13 +89,14 @@ def build_deep_research_graph(
     Args:
         provider: LLM provider to pass to all research nodes.
         model: Specific model ID; uses provider default if None.
+        api_key: Override API key; falls back to environment variable if None.
 
     Returns:
         CompiledGraph: A compiled LangGraph ready to invoke or stream.
     """
-    plan = partial(plan_node, provider=provider, model=model)
-    update = partial(update_node, provider=provider, model=model)
-    conclude = partial(conclude_node, provider=provider, model=model)
+    plan = partial(plan_node, provider=provider, model=model, api_key=api_key)
+    update = partial(update_node, provider=provider, model=model, api_key=api_key)
+    conclude = partial(conclude_node, provider=provider, model=model, api_key=api_key)
 
     graph = StateGraph(DeepResearchState)
     graph.add_node("retrieve", _retrieve)

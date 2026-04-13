@@ -144,6 +144,7 @@ async def plan_node(
     state: DeepResearchState,
     provider: str = "google",
     model: str | None = None,
+    api_key: str | None = None,
 ) -> dict:
     """
     Iteration 1 — plan the investigation and extract initial findings.
@@ -157,12 +158,13 @@ async def plan_node(
             and context_text.
         provider: LLM provider to use — "google" or "openrouter".
         model: Specific model ID; falls back to provider default if None.
+        api_key: Override API key; falls back to environment variable if None.
 
     Returns:
         dict: Updates to merge into state — answer, research_notes (with plan
             appended), iteration incremented to 2, is_done, and query.
     """
-    llm = get_llm(provider, model)
+    llm = get_llm(provider, model, api_key=api_key)
 
     prompt = DEEP_RESEARCH_PLAN_PROMPT.format(
         repo_url=state["repo_url"],
@@ -189,6 +191,7 @@ async def update_node(
     state: DeepResearchState,
     provider: str = "google",
     model: str | None = None,
+    api_key: str | None = None,
 ) -> dict:
     """
     Iteration 2 — dig a new angle and accumulate findings.
@@ -203,12 +206,13 @@ async def update_node(
             context_text, research_notes, and iteration.
         provider: LLM provider to use — "google" or "openrouter".
         model: Specific model ID; falls back to provider default if None.
+        api_key: Override API key; falls back to environment variable if None.
 
     Returns:
         dict: Updates to merge into state — answer, research_notes (with this
             update appended), iteration incremented, is_done, and query.
     """
-    llm = get_llm(provider, model)
+    llm = get_llm(provider, model, api_key=api_key)
 
     # update_num counts updates only (iteration 2 = update 1, etc.)
     update_num = state["iteration"] - 1
@@ -245,6 +249,7 @@ async def conclude_node(
     state: DeepResearchState,
     provider: str = "google",
     model: str | None = None,
+    api_key: str | None = None,
 ) -> dict:
     """
     Final step — synthesise all accumulated notes into a polished answer.
@@ -258,11 +263,12 @@ async def conclude_node(
             and research_notes.
         provider: LLM provider to use — "google" or "openrouter".
         model: Specific model ID; falls back to provider default if None.
+        api_key: Override API key; falls back to environment variable if None.
 
     Returns:
         dict: {"answer": str} — the final synthesized answer.
     """
-    llm = get_llm(provider, model)
+    llm = get_llm(provider, model, api_key=api_key)
 
     prompt = DEEP_RESEARCH_CONCLUDE_PROMPT.format(
         repo_url=state["repo_url"],

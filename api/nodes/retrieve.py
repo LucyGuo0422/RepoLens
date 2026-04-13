@@ -11,7 +11,8 @@ from api.reranker import rerank
 from api.state import ChatState
 from api.vectorstore import load_or_build_vectorstore
 
-_TOP_K = 20
+_TOP_K = 8
+_RERANK_CANDIDATES = 20
 _RERANK_TOP_N = 5
 _RRF_K = 60
 
@@ -101,11 +102,11 @@ def retrieve_hybrid_rerank(state: ChatState) -> dict:
     repo_url = state["repo_url"]
     query = state["query"]
 
-    # Hybrid search
+    # Hybrid search (use larger candidate pool before reranking)
     vs = load_or_build_vectorstore(repo_url)
-    dense_docs = vs.similarity_search(query, k=_TOP_K)
-    sparse_docs = bm25_search(repo_url, query, k=_TOP_K)
-    merged = _reciprocal_rank_fusion(dense_docs, sparse_docs)
+    dense_docs = vs.similarity_search(query, k=_RERANK_CANDIDATES)
+    sparse_docs = bm25_search(repo_url, query, k=_RERANK_CANDIDATES)
+    merged = _reciprocal_rank_fusion(dense_docs, sparse_docs, top_n=_RERANK_CANDIDATES)
 
     # Rerank
     reranked = rerank(query, merged, top_n=_RERANK_TOP_N)

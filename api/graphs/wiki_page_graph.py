@@ -14,6 +14,7 @@ from api.state import WikiPageState
 def build_wiki_page_graph(
     provider: str = "google",
     model: str | None = None,
+    api_key: str | None = None,
 ):
     """
     Build and compile the wiki page generation LangGraph.
@@ -26,11 +27,12 @@ def build_wiki_page_graph(
     Args:
         provider: LLM provider to pass to the generate_page node.
         model: Specific model ID; uses provider default if None.
+        api_key: Override API key; falls back to environment variable if None.
 
     Returns:
         CompiledGraph: A compiled LangGraph ready to invoke.
     """
-    generate_page_node = partial(generate_page, provider=provider, model=model)
+    generate_page_node = partial(generate_page, provider=provider, model=model, api_key=api_key)
 
     graph = StateGraph(WikiPageState)
     graph.add_node("retrieve", retrieve_wiki)
