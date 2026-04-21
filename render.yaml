@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: repolens-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    envVars:
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        value: "*"
+    healthCheckPath: /health
+    disk:
+      name: repolens-data
+      mountPath: /root/.repolens
+      sizeGB: 10
