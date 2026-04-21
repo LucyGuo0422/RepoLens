@@ -1,19 +1,117 @@
 # RepoLens
 
-A RAG-powered wiki generator for public GitHub repositories. Enter a repo URL and RepoLens automatically generates comprehensive wiki pages and enables a chat interface for asking questions about the codebase.
+> **Understand any GitHub repository in minutes — ask it questions, read its wiki, trace answers back to source.**
 
-## Features
+RepoLens is a production-style RAG application for exploring unfamiliar codebases. Paste a GitHub URL, and it clones the repo, indexes it into a vector store, auto-generates a navigable wiki, and lets you chat with the code — every answer grounded in real file paths and line-level snippets.
 
-- **Automatic wiki generation** — structured pages with navigation, generated from actual source code
-- **Multi-turn chat Q&A** — ask questions about any repo with persistent conversation memory and source attribution
-- **Deep research mode** — multi-step analysis (planner + update + synthesizer) for complex architectural questions
-- **Hybrid retrieval** — three retrieval modes: dense-only, hybrid (dense + BM25 with RRF), and hybrid + cross-encoder reranking
-- **Eval pipeline** — synthetic question generation + LLM-as-judge scoring (relevance, groundedness, retrieval relevance) via LangSmith
-- **Multi-language output** — generate wikis in English or Chinese
-- **Provider flexibility** — switch between Google Gemini and OpenRouter LLMs; per-request API key overrides via headers
-- **API key management** — configure API keys from the frontend UI
-- **Wiki caching** — generated wikis are cached in SQLite so they load instantly on revisit
-- **Docker support** — multi-stage Dockerfile with Render.com deployment config
+Built as an end-to-end system: a hybrid retrieval pipeline (dense + BM25 + cross-encoder rerank), a multi-step deep-research agent over LangGraph, and an automated LLM-as-judge evaluation harness wired to LangSmith.
+
+---
+
+## Screenshots
+
+<!-- Drop screenshots into ./assets/ and update the paths below. -->
+
+### Wiki view — auto-generated per repo
+![Wiki View](./assets/wiki.png)
+
+### Chat Q&A with source attribution
+![Chat Q&A](./assets/chat.png)
+
+---
+
+## Key Features
+
+- **AI-powered repo Q&A** — ask questions in natural language and get source-grounded answers with clickable file references
+- **Automatic wiki generation** — the system plans a page structure from the repo's file tree + README, then generates each page via RAG
+- **Deep research mode** — a 3-step LangGraph agent (planner → update → synthesizer) for complex, cross-file architectural questions
+- **Hybrid retrieval pipeline** — dense embeddings + BM25 fused via Reciprocal Rank Fusion, with optional cross-encoder reranking
+- **LLM evaluation harness** — synthetic question generation across 6 categories, LLM-as-judge scoring on relevance, groundedness, and retrieval quality
+- **Multi-provider LLM support** — Gemini, GPT-4o, Claude, Llama, Qwen via OpenRouter; per-request API key overrides
+- **Streaming UI** — all generation endpoints stream tokens to the browser via `StreamingResponse` + `ReadableStream`
+- **Wiki + conversation caching** — generated wikis and multi-turn chat history persist across sessions
+- **Docker + Render deployment** — multi-stage Dockerfile with `render.yaml` for one-click cloud deploy
+
+---
+
+## Example
+
+**Question**
+
+> What is the architecture of this repository?
+
+**RepoLens answer (abridged)**
+
+> The backend is a FastAPI service that orchestrates a LangGraph RAG pipeline. Retrieval combines dense vector search (Qdrant) with BM25 sparse search, fused via RRF and optionally reranked with a cross-encoder. Wiki pages, chat history, and eval results are persisted in SQLite, while embeddings live in a per-repo Qdrant collection. The frontend is a Next.js app that streams tokens from the backend over `ReadableStream`.
+>
+> **Sources:** `api/graphs/rag_graph.py`, `api/nodes/retrieve.py`, `api/vectorstore.py`, `frontend/src/hooks/useStreamingContent.ts`
+
+---
+
+## How It Works
+
+### 1. Repository indexing
+
+1. Shallow-clone the repo (`git clone --depth 1`)
+2. Walk files, skipping `node_modules`, `.git`, `__pycache__`, build artifacts
+3. Filter oversized files (> 20k tokens for code, > 2k for docs)
+4. Token-aware chunking — 350/100 overlap for code, 200/50 for docs
+5. Embed chunks via OpenAI `text-embedding-3-small` or Google `gemini-embedding-001`
+6. Persist to a per-repo Qdrant collection at `~/.repolens/qdrant/`
+
+### 2. Retrieval pipeline
+
+Three retrieval modes, switchable per request:
+
+| Mode | Description |
+|------|-------------|
+| **Dense** | Vector similarity only |
+| **Hybrid** | Dense + BM25, fused via Reciprocal Rank Fusion (k=60) |
+| **Hybrid + Rerank** | Hybrid recall (top-20) → cross-encoder rerank → top-5 |
+
+### 3. Wiki generation
+
+- `POST /wiki/structure` — an LLM plans wiki pages from the file tree + README
+- `POST /wiki/generate-page` — each page is generated via RAG and streamed to the client
+- Pages cache to SQLite so revisits load instantly
+
+### 4. Deep research mode
+
+A LangGraph agent that runs three reasoning steps:
+
+1. **Planner** — reads top-20 retrieved chunks, drafts an investigation strategy, emits a refined search query
+2. **Update** — re-retrieves with the refined query, explores a new angle, may early-exit with `[RESEARCH_COMPLETE]`
+3. **Synthesizer** — combines all accumulated notes into a final grounded answer
+
+### 5. Evaluation pipeline
+
+Automated RAG quality measurement wired to LangSmith:
+
+- **Dataset generation** — LLM synthesizes questions across 6 categories: `direct`, `rephrased`, `conceptual`, `negative` (hallucination traps), `cross-file`, `keyword` (exact-identifier recall)
+- **RAG execution** — each question is run end-to-end through the RAG graph
+- **LLM-as-judge scoring** — three evaluators grade:
+  - **Relevance** — does the answer address the question?
+  - **Groundedness** — is every claim supported by retrieved context?
+  - **Retrieval relevance** — did the retriever fetch useful chunks?
+- Results persist in SQLite and are accessible via `/eval/results`
+
+---
+
+## Technical Highlights
+
+Skills and engineering decisions demonstrated by this project:
+
+- **Production-style RAG pipeline** with configurable retrieval modes and streaming responses
+- **Hybrid search with RRF fusion** — combined dense embeddings and BM25 sparse scoring to improve recall
+- **Cross-encoder reranking** (sentence-transformers) layered on top of hybrid recall to improve precision on top-k
+- **Multi-step agentic reasoning** orchestrated with LangGraph (planner → update → synthesizer with early-exit)
+- **LLM evaluation harness** — synthetic question generation + LLM-as-judge on 3 axes, integrated with LangSmith tracing
+- **Multi-provider LLM abstraction** — unified factory over Gemini and OpenRouter-proxied models with per-request overrides
+- **End-to-end streaming** — FastAPI `StreamingResponse` piped to a Next.js `ReadableStream` hook for token-by-token UI updates
+- **Per-repo data isolation** — Qdrant collections, SQLite checkpoints, and wiki cache keyed by `owner/repo`
+- **Deployable** — multi-stage Dockerfile and `render.yaml` for a reproducible cloud deploy
+
+---
 
 ## Tech Stack
 
@@ -22,75 +120,102 @@ A RAG-powered wiki generator for public GitHub repositories. Enter a repo URL an
 | Frontend | Next.js 16 (TypeScript, React 19), Tailwind CSS v4 |
 | Backend | FastAPI (Python 3.13+) |
 | RAG Engine | LangGraph + LangChain |
-| LLMs | Google Gemini (2.0 Flash, 2.5 Flash, 1.5 Pro), OpenRouter (GPT-4o, Claude Sonnet 4.5, Llama 3.3, Qwen 2.5, etc.) |
-| Embeddings | OpenAI `text-embedding-3-small` / Google `gemini-embedding-001` (configurable) |
-| Sparse Search | BM25 via `rank-bm25` |
+| LLMs | Google Gemini (2.0 Flash, 2.5 Flash, 1.5 Pro), OpenRouter (GPT-4o, Claude Sonnet 4.5, Llama 3.3, Qwen 2.5) |
+| Embeddings | OpenAI `text-embedding-3-small` / Google `gemini-embedding-001` |
+| Sparse search | BM25 via `rank-bm25` |
 | Reranking | Cross-encoder via `sentence-transformers` |
-| Vector Store | Qdrant (local file mode) |
-| Eval | LangSmith + LLM-as-judge evaluators |
-| Conversation Memory | LangGraph + SQLite checkpoints |
-| Wiki Cache | SQLite |
+| Vector store | Qdrant (local file mode) |
+| Evaluation | LangSmith + LLM-as-judge |
+| Conversation memory | LangGraph SQLite checkpointer |
+| Wiki & eval cache | SQLite |
+| Deploy | Docker + Render.com |
 
-## Prerequisites
+---
+
+## System Architecture
+
+<!-- Add an architecture diagram at ./assets/architecture.png -->
+
+![Architecture](./assets/architecture.png)
+
+```
+User ──► Next.js frontend ──► FastAPI backend ──► LangGraph graphs
+                                                   ├─► Retrieve (dense / BM25 / rerank)
+                                                   ├─► Format context
+                                                   └─► Generate (LLM, streaming)
+                                                          │
+                                  ┌───────────────────────┼───────────────────────┐
+                                  ▼                       ▼                       ▼
+                             Qdrant (vectors)      SQLite (checkpoints,      LangSmith
+                                                    wiki + eval cache)       (tracing + eval)
+```
+
+---
+
+## Project Structure
+
+```
+RepoLens/
+├── api/
+│   ├── api.py                  # FastAPI routes
+│   ├── data_pipeline.py        # Cloning + chunking
+│   ├── vectorstore.py          # Qdrant management
+│   ├── llm.py                  # Multi-provider LLM factory
+│   ├── embedder.py             # Embedding factory
+│   ├── reranker.py             # Cross-encoder reranker
+│   ├── graphs/                 # LangGraph builders (RAG, wiki, deep research)
+│   ├── nodes/                  # Retrieval, context formatting, generation, research
+│   └── eval/                   # Dataset gen, runner, evaluators, cache
+├── frontend/
+│   └── src/
+│       ├── app/                # Next.js routes (home, wiki viewer)
+│       ├── components/         # Ask, Markdown, WikiTreeView, ApiKeysModal, ...
+│       └── hooks/              # useStreamingContent
+├── Dockerfile
+└── render.yaml
+```
+
+---
+
+## Getting Started
+
+### Prerequisites
 
 - Python 3.13+
 - Node.js 18+
 - [`uv`](https://docs.astral.sh/uv/) Python package manager
-- OpenAI API key — used by the default embedder (`text-embedding-3-small`)
-- Google API key ([get one here](https://aistudio.google.com/app/apikey)) — for Google Gemini LLMs and/or Google embeddings
-- OpenRouter API key (optional, for OpenRouter models)
-- LangSmith API key (optional, for eval pipeline tracing)
+- `OPENAI_API_KEY` — used by the default embedder
+- `GOOGLE_API_KEY` — for Gemini LLMs and/or Google embeddings
+- `OPENROUTER_API_KEY` (optional) — for OpenRouter-proxied models
+- `LANGSMITH_API_KEY` (optional) — for eval tracing
 
-## Setup
+### Setup
 
-**1. Clone the repo**
 ```bash
 git clone https://github.com/your-username/RepoLens.git
 cd RepoLens
+cp .env.example .env            # then fill in API keys
+uv sync                          # backend deps
+cd frontend && npm install       # frontend deps
 ```
 
-**2. Configure environment variables**
-```bash
-cp .env.example .env
-```
-Fill in `.env`:
-```
-GOOGLE_API_KEY=your_google_api_key
-OPENAI_API_KEY=your_openai_api_key
-OPENROUTER_API_KEY=your_openrouter_api_key    # optional
-LANGSMITH_API_KEY=your_langsmith_api_key      # optional, for eval
-LANGSMITH_TRACING=true                        # optional, for eval
-```
+### Run
 
-**3. Install backend dependencies**
-```bash
-uv sync
-```
+Backend (port 8002):
 
-**4. Install frontend dependencies**
-```bash
-cd frontend && npm install
-```
-
-## Running
-
-Start both servers simultaneously (in separate terminals):
-
-**Backend** (port 8002):
 ```bash
 uv run uvicorn api.api:app --host 0.0.0.0 --port 8002 --reload
 ```
 
-**Frontend** (port 3000):
+Frontend (port 3000):
+
 ```bash
 cd frontend && npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Then open [http://localhost:3000](http://localhost:3000).
 
 ### Docker
-
-Build and run the backend with Docker:
 
 ```bash
 docker build -t repolens .
@@ -101,54 +226,25 @@ docker run -p 8002:8002 \
   repolens
 ```
 
-## How It Works
+---
 
-### Indexing a Repository
+## API Endpoints
 
-When you submit a GitHub URL, RepoLens:
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/models/config` | GET | Available LLM providers and models |
+| `/lang/config` | GET | Supported output languages |
+| `/wiki/structure` | POST | Plan wiki pages for a repo |
+| `/wiki/generate-page` | POST | Generate a wiki page (streaming) |
+| `/wiki/cache` | GET/POST/DELETE | Fetch, save, or clear cached wiki |
+| `/api/processed_projects` | GET | List all cached wikis |
+| `/chat/stream` | POST | Multi-turn RAG chat (streaming) |
+| `/chat/deep-research` | POST | Deep research agent (streaming) |
+| `/eval/run` | POST | Run eval pipeline for a repo |
+| `/eval/results` | GET | Fetch most recent eval results |
 
-1. Clones the repo with `--depth 1` (shallow clone, no history)
-2. Walks all files, skipping `node_modules`, `.git`, `__pycache__`, etc.
-3. Filters large files (> 20,000 tokens for code, > 2,000 tokens for docs)
-4. Chunks files using token-aware splitters (350-token chunks / 100-token overlap for code; 200/50 for docs)
-5. Embeds chunks via OpenAI `text-embedding-3-small` (default) or Google Generative AI Embeddings
-6. Stores in a per-repo Qdrant collection at `~/.repolens/qdrant/`
-
-### Retrieval Modes
-
-RepoLens supports three retrieval strategies:
-
-| Mode | How it works |
-|------|-------------|
-| **Dense** | Vector similarity search only |
-| **Hybrid** | Dense + BM25 sparse search, merged with Reciprocal Rank Fusion (k=60) |
-| **Hybrid + Rerank** | Hybrid retrieval → cross-encoder reranking (top-20 candidates narrowed to top-5) |
-
-### Wiki Generation
-
-1. `POST /wiki/structure` — LLM analyzes the file tree and README to plan wiki pages
-2. `POST /wiki/generate-page` — each page is generated via RAG (retrieve relevant chunks → format context → generate markdown)
-3. Generated wikis are cached in SQLite and reused on subsequent visits
-
-### Chat Q&A
-
-Uses a RAG graph: retrieve → format context → generate. Responses include source attribution (file paths + relevant snippets). Conversation history is persisted per session via LangGraph checkpoints.
-
-### Deep Research
-
-Runs 3 LLM calls: **planner** (iteration 1 — analyzes top-20 retrieved chunks, lays out an investigation strategy, emits a refined search query) → **update** (iteration 2 — re-retrieves using the refined query, digs a new angle) → **synthesizer** (conclude node — combines all accumulated notes into a final answer). Early exit is possible if the update node signals `[RESEARCH_COMPLETE]`.
-
-### Eval Pipeline
-
-Automated RAG quality evaluation:
-
-1. **Dataset generation** — LLM generates synthetic questions across 6 categories: direct, rephrased, conceptual, negative (hallucination tests), cross-file, and keyword (exact identifier questions)
-2. **RAG execution** — runs each question through the RAG graph
-3. **LLM-as-judge scoring** — three evaluators grade each response:
-   - **Relevance** — does the answer address the question?
-   - **Groundedness** — is the answer supported by retrieved context?
-   - **Retrieval relevance** — did the retriever fetch useful chunks?
-4. Results are persisted in SQLite and accessible via API
+---
 
 ## Data Persistence
 
@@ -159,81 +255,23 @@ Automated RAG quality evaluation:
 └── wiki_cache.db    # Generated wikis + eval results
 ```
 
-## API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/models/config` | GET | Available LLM providers and models |
-| `/lang/config` | GET | Supported output languages |
-| `/wiki/structure` | POST | Plan wiki pages for a repo |
-| `/wiki/generate-page` | POST | Generate a single wiki page (streaming) |
-| `/wiki/cache` | GET/POST/DELETE | Fetch, save, or clear cached wiki |
-| `/api/processed_projects` | GET | List all cached wikis |
-| `/chat/stream` | POST | Multi-turn RAG chat (streaming) |
-| `/chat/deep-research` | POST | Deep research: planner + update + synthesizer (streaming) |
-| `/eval/run` | POST | Run eval pipeline for a repo |
-| `/eval/results` | GET | Fetch most recent eval results |
-
-## Project Structure
-
-```
-RepoLens/
-├── api/
-│   ├── api.py                  # FastAPI app — all routes
-│   ├── data_pipeline.py        # Repo cloning and chunking
-│   ├── vectorstore.py          # Qdrant collection management
-│   ├── llm.py                  # Multi-provider LLM factory
-│   ├── embedder.py             # Embedding provider factory
-│   ├── reranker.py             # Cross-encoder reranker
-│   ├── prompts.py              # LLM prompt templates
-│   ├── wiki_cache.py           # SQLite wiki cache
-│   ├── checkpointer.py         # LangGraph conversation memory
-│   ├── graphs/                 # LangGraph graph builders
-│   │   ├── rag_graph.py        #   RAG chat (dense / hybrid / hybrid+rerank)
-│   │   ├── wiki_page_graph.py  #   Wiki page generation
-│   │   └── deep_research_graph.py  # Multi-iteration deep research
-│   ├── nodes/                  # Individual graph node functions
-│   │   ├── retrieve.py         #   Dense, hybrid, and reranked retrieval
-│   │   ├── retrieve_wiki.py    #   Wiki-specific retrieval
-│   │   ├── format_context.py   #   Group docs by file path
-│   │   ├── generate.py         #   LLM answer generation
-│   │   ├── generate_page.py    #   LLM wiki page generation
-│   │   └── research_nodes.py   #   Plan, update, conclude nodes
-│   ├── eval/                   # Eval pipeline
-│   │   ├── dataset_gen.py      #   Synthetic question generation
-│   │   ├── runner.py           #   Eval orchestration
-│   │   ├── evaluators.py       #   LLM-as-judge scorers
-│   │   └── eval_cache.py       #   Eval result persistence
-│   └── config/                 # LLM provider and embedder config
-│       ├── generator.json
-│       └── embedder.json
-├── frontend/
-│   ├── src/app/
-│   │   ├── page.tsx            # Home — repo URL input
-│   │   └── [owner]/[repo]/
-│   │       └── page.tsx        # Wiki viewer
-│   ├── src/components/
-│   │   ├── Ask.tsx             # Chat sidebar (Fast/Deep mode toggle)
-│   │   ├── ApiKeysModal.tsx    # API key management modal
-│   │   ├── ConfigCard.tsx      # Provider/model/language selector
-│   │   ├── Markdown.tsx        # Markdown + Mermaid renderer
-│   │   ├── Navbar.tsx          # Navigation bar
-│   │   └── WikiTreeView.tsx    # Sidebar navigation
-│   └── src/hooks/
-│       └── useStreamingContent.ts  # Streaming response hook
-├── Dockerfile                  # Multi-stage Docker build
-└── render.yaml                 # Render.com deployment config
-```
+---
 
 ## Deployment
 
-### Render.com
+The included `render.yaml` provisions a Docker-based web service on Render.com with:
 
-The included `render.yaml` configures a Docker-based web service with:
 - Health check at `/health`
-- 10 GB persistent disk at `/root/.repolens` for Qdrant, wiki cache, and checkpoints
+- 10 GB persistent disk mounted at `/root/.repolens` (Qdrant + SQLite)
 - Environment variables for API keys and CORS origins
+
+---
+
+## Motivation
+
+Onboarding onto an unfamiliar codebase is slow and frustrating — skim the README, click through folders, grep for keywords, piece together a mental model. RepoLens compresses that loop by combining retrieval, reasoning, and documentation generation into a single tool, and by grounding every answer in real source code so you can trust what you read.
+
+---
 
 ## License
 
